@@ -56,7 +56,7 @@ public:
                     int ring_size = RTP_GOP_SIZE) :
             MediaSource(RTSP_SCHEMA, vhost, app, stream_id), _ring_size(ring_size) {}
 
-    virtual ~RtspMediaSource() {}
+    ~RtspMediaSource() override{}
 
     /**
      * 获取媒体源的环形缓冲
@@ -156,7 +156,8 @@ public:
      * @param rtp rtp包
      * @param keyPos 该包是否为关键帧的第一个包
      */
-    void onWrite(const RtpPacket::Ptr &rtp, bool keyPos) override {
+    void onWrite(RtpPacket::Ptr rtp, bool keyPos) override {
+        _speed += rtp->size();
         assert(rtp->type >= 0 && rtp->type < TrackMax);
         auto track = _tracks[rtp->type];
         if (track) {
@@ -166,7 +167,7 @@ public:
         }
         if (!_ring) {
             weak_ptr<RtspMediaSource> weakSelf = dynamic_pointer_cast<RtspMediaSource>(shared_from_this());
-            auto lam = [weakSelf](const EventPoller::Ptr &, int size, bool) {
+            auto lam = [weakSelf](int size) {
                 auto strongSelf = weakSelf.lock();
                 if (!strongSelf) {
                     return;
@@ -181,7 +182,13 @@ public:
                 regist();
             }
         }
-        PacketCache<RtpPacket>::inputPacket(rtp->type == TrackVideo, rtp, keyPos);
+        bool is_video = rtp->type == TrackVideo;
+        PacketCache<RtpPacket>::inputPacket(is_video, std::move(rtp), keyPos);
+    }
+
+    void clearCache() override{
+        PacketCache<RtpPacket>::clearCache();
+        _ring->clearCache();
     }
 
 private:
@@ -190,18 +197,9 @@ private:
      * @param rtp_list rtp包列表
      * @param key_pos 是否包含关键帧
      */
-    void onFlush(std::shared_ptr<List<RtpPacket::Ptr> > &rtp_list, bool key_pos) override {
+    void onFlush(std::shared_ptr<List<RtpPacket::Ptr> > rtp_list, bool key_pos) override {
         //如果不存在视频，那么就没有存在GOP缓存的意义，所以is_key一直为true确保一直清空GOP缓存
-        _ring->write(rtp_list, _have_video ? key_pos : true);
-    }
-
-    /**
-     * 每次增减消费者都会触发该函数
-     */
-    void onReaderChanged(int size) {
-        if (size == 0) {
-            onNoneReader();
-        }
+        _ring->write(std::move(rtp_list), _have_video ? key_pos : true);
     }
 
 private:

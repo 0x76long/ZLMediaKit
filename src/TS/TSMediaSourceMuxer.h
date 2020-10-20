@@ -8,28 +8,27 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#ifndef ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
-#define ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
+#ifndef ZLMEDIAKIT_TSMEDIASOURCEMUXER_H
+#define ZLMEDIAKIT_TSMEDIASOURCEMUXER_H
 
-#include "RtspMuxer.h"
-#include "Rtsp/RtspMediaSource.h"
+#include "TSMediaSource.h"
+#include "Record/TsMuxer.h"
 
 namespace mediakit {
 
-class RtspMediaSourceMuxer : public RtspMuxer, public MediaSourceEventInterceptor,
-                             public std::enable_shared_from_this<RtspMediaSourceMuxer> {
+class TSMediaSourceMuxer : public TsMuxer, public MediaSourceEventInterceptor,
+                           public std::enable_shared_from_this<TSMediaSourceMuxer> {
 public:
-    typedef std::shared_ptr<RtspMediaSourceMuxer> Ptr;
+    using Ptr = std::shared_ptr<TSMediaSourceMuxer>;
 
-    RtspMediaSourceMuxer(const string &vhost,
-                         const string &strApp,
-                         const string &strId,
-                         const TitleSdp::Ptr &title = nullptr) : RtspMuxer(title){
-        _media_src = std::make_shared<RtspMediaSource>(vhost,strApp,strId);
-        getRtpRing()->setDelegate(_media_src);
+    TSMediaSourceMuxer(const string &vhost,
+                       const string &app,
+                       const string &stream_id) {
+        _media_src = std::make_shared<TSMediaSource>(vhost, app, stream_id);
+        _pool.setSize(256);
     }
 
-    ~RtspMediaSourceMuxer() override{}
+    ~TSMediaSourceMuxer() override = default;
 
     void setListener(const std::weak_ptr<MediaSourceEvent> &listener){
         _listener = listener;
@@ -38,14 +37,6 @@ public:
 
     int readerCount() const{
         return _media_src->readerCount();
-    }
-
-    void setTimeStamp(uint32_t stamp){
-        _media_src->setTimeStamp(stamp);
-    }
-
-    void onAllTrackReady(){
-        _media_src->setSdp(getSdp());
     }
 
     void onReaderChanged(MediaSource &sender, int size) override {
@@ -62,7 +53,7 @@ public:
             _media_src->clearCache();
         }
         if (_enabled) {
-            RtspMuxer::inputFrame(frame);
+            TsMuxer::inputFrame(frame);
         }
     }
 
@@ -71,12 +62,23 @@ public:
         return _clear_cache ? true : _enabled;
     }
 
+protected:
+    void onTs(const void *data, int len,uint32_t timestamp,bool is_idr_fast_packet) override{
+        if(!data || !len){
+            return;
+        }
+        TSPacket::Ptr packet = _pool.obtain();
+        packet->assign((char *) data, len);
+        packet->time_stamp = timestamp;
+        _media_src->onWrite(std::move(packet), is_idr_fast_packet);
+    }
+
 private:
     bool _enabled = true;
     bool _clear_cache = false;
-    RtspMediaSource::Ptr _media_src;
+    TSMediaSource::PoolType _pool;
+    TSMediaSource::Ptr _media_src;
 };
 
-
 }//namespace mediakit
-#endif //ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
+#endif //ZLMEDIAKIT_TSMEDIASOURCEMUXER_H

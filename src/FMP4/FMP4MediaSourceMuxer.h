@@ -8,28 +8,28 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#ifndef ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
-#define ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
+#ifndef ZLMEDIAKIT_FMP4MEDIASOURCEMUXER_H
+#define ZLMEDIAKIT_FMP4MEDIASOURCEMUXER_H
 
-#include "RtspMuxer.h"
-#include "Rtsp/RtspMediaSource.h"
+#if defined(ENABLE_MP4)
+
+#include "FMP4MediaSource.h"
+#include "Record/MP4Muxer.h"
 
 namespace mediakit {
 
-class RtspMediaSourceMuxer : public RtspMuxer, public MediaSourceEventInterceptor,
-                             public std::enable_shared_from_this<RtspMediaSourceMuxer> {
+class FMP4MediaSourceMuxer : public MP4MuxerMemory, public MediaSourceEventInterceptor,
+                             public std::enable_shared_from_this<FMP4MediaSourceMuxer> {
 public:
-    typedef std::shared_ptr<RtspMediaSourceMuxer> Ptr;
+    using Ptr = std::shared_ptr<FMP4MediaSourceMuxer>;
 
-    RtspMediaSourceMuxer(const string &vhost,
-                         const string &strApp,
-                         const string &strId,
-                         const TitleSdp::Ptr &title = nullptr) : RtspMuxer(title){
-        _media_src = std::make_shared<RtspMediaSource>(vhost,strApp,strId);
-        getRtpRing()->setDelegate(_media_src);
+    FMP4MediaSourceMuxer(const string &vhost,
+                         const string &app,
+                         const string &stream_id) {
+        _media_src = std::make_shared<FMP4MediaSource>(vhost, app, stream_id);
     }
 
-    ~RtspMediaSourceMuxer() override{}
+    ~FMP4MediaSourceMuxer() override = default;
 
     void setListener(const std::weak_ptr<MediaSourceEvent> &listener){
         _listener = listener;
@@ -38,14 +38,6 @@ public:
 
     int readerCount() const{
         return _media_src->readerCount();
-    }
-
-    void setTimeStamp(uint32_t stamp){
-        _media_src->setTimeStamp(stamp);
-    }
-
-    void onAllTrackReady(){
-        _media_src->setSdp(getSdp());
     }
 
     void onReaderChanged(MediaSource &sender, int size) override {
@@ -62,7 +54,7 @@ public:
             _media_src->clearCache();
         }
         if (_enabled) {
-            RtspMuxer::inputFrame(frame);
+            MP4MuxerMemory::inputFrame(frame);
         }
     }
 
@@ -71,12 +63,27 @@ public:
         return _clear_cache ? true : _enabled;
     }
 
+    void onAllTrackReady() {
+        _media_src->setInitSegment(getInitSegment());
+    }
+
+protected:
+    void onSegmentData(const string &string, uint32_t stamp, bool key_frame) override {
+        if (string.empty()) {
+            return;
+        }
+        FMP4Packet::Ptr packet = std::make_shared<FMP4Packet>(std::move(string));
+        packet->time_stamp = stamp;
+        _media_src->onWrite(std::move(packet), key_frame);
+    }
+
 private:
     bool _enabled = true;
     bool _clear_cache = false;
-    RtspMediaSource::Ptr _media_src;
+    FMP4MediaSource::Ptr _media_src;
 };
 
-
 }//namespace mediakit
-#endif //ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
+
+#endif// defined(ENABLE_MP4)
+#endif //ZLMEDIAKIT_FMP4MEDIASOURCEMUXER_H

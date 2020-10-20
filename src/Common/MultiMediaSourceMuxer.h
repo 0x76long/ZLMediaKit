@@ -10,12 +10,16 @@
 
 #ifndef ZLMEDIAKIT_MULTIMEDIASOURCEMUXER_H
 #define ZLMEDIAKIT_MULTIMEDIASOURCEMUXER_H
+
+#include "Common/Stamp.h"
+#include "Rtp/PSRtpSender.h"
+#include "Record/Recorder.h"
+#include "Record/HlsRecorder.h"
+#include "Record/HlsMediaSource.h"
 #include "Rtsp/RtspMediaSourceMuxer.h"
 #include "Rtmp/RtmpMediaSourceMuxer.h"
-#include "Record/Recorder.h"
-#include "Record/HlsMediaSource.h"
-#include "Record/HlsRecorder.h"
-#include "Rtp/PSRtpSender.h"
+#include "TS/TSMediaSourceMuxer.h"
+#include "FMP4/FMP4MediaSourceMuxer.h"
 
 namespace mediakit{
 
@@ -46,16 +50,18 @@ private:
     void onTrackReady(const Track::Ptr & track) override;
     void onTrackFrame(const Frame::Ptr &frame) override;
     void onAllTrackReady() override;
-    MediaSource::Ptr getHlsMediaSource() const;
 
 private:
-    bool _enable_rtxp = false;
-    bool _enable_record = false;
+    string _stream_url;
     Listener *_track_listener = nullptr;
     RtmpMediaSourceMuxer::Ptr _rtmp;
     RtspMediaSourceMuxer::Ptr _rtsp;
-    MediaSinkInterface::Ptr _hls;
+    HlsRecorder::Ptr _hls;
     MediaSinkInterface::Ptr _mp4;
+    TSMediaSourceMuxer::Ptr _ts;
+#if defined(ENABLE_MP4)
+    FMP4MediaSourceMuxer::Ptr _fmp4;
+#endif
     std::weak_ptr<MediaSourceEvent> _listener;
 };
 
