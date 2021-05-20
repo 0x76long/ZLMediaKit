@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -34,12 +34,6 @@ protected:
     bool close(MediaSource &sender,bool force) override;
     // 观看总人数
     int totalReaderCount(MediaSource &sender) override;
-    // 获取媒体源类型
-    MediaOriginType getOriginType(MediaSource &sender) const override;
-    // 获取媒体源url或者文件路径
-    string getOriginUrl(MediaSource &sender) const override;
-    // 获取媒体源客户端相关信息
-    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
 
 private:
     weak_ptr<RtpSelector > _parent;
@@ -52,8 +46,13 @@ public:
     RtpSelector();
     ~RtpSelector();
 
-    static bool getSSRC(const char *data,int data_len, uint32_t &ssrc);
+    static bool getSSRC(const char *data,size_t data_len, uint32_t &ssrc);
     static RtpSelector &Instance();
+
+    /**
+     * 清空所有对象
+     */
+    void clear();
 
     /**
      * 输入多个rtp流，根据ssrc分流
@@ -64,7 +63,7 @@ public:
      * @param dts_out 解析出最新的dts
      * @return 是否成功
      */
-    bool inputRtp(const Socket::Ptr &sock, const char *data, int data_len,
+    bool inputRtp(const Socket::Ptr &sock, const char *data, size_t data_len,
                   const struct sockaddr *addr, uint32_t *dts_out = nullptr);
 
     /**
@@ -87,9 +86,9 @@ private:
     void createTimer();
 
 private:
-    unordered_map<string,RtpProcessHelper::Ptr> _map_rtp_process;
-    recursive_mutex _mtx_map;
     Timer::Ptr _timer;
+    recursive_mutex _mtx_map;
+    unordered_map<string,RtpProcessHelper::Ptr> _map_rtp_process;
 };
 
 }//namespace mediakit

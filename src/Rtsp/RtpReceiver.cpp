@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -11,10 +11,6 @@
 #include "Common/config.h"
 #include "RtpReceiver.h"
 
-#define AV_RB16(x)                           \
-    ((((const uint8_t*)(x))[0] << 8) |          \
-      ((const uint8_t*)(x))[1])
-
 #define RTP_MAX_SIZE (10 * 1024)
 
 namespace mediakit {
@@ -23,135 +19,97 @@ RtpReceiver::RtpReceiver() {
     int index = 0;
     for (auto &sortor : _rtp_sortor) {
         sortor.setOnSort([this, index](uint16_t seq, RtpPacket::Ptr &packet) {
-            onRtpSorted(packet, index);
+            onRtpSorted(std::move(packet), index);
         });
         ++index;
     }
 }
+
 RtpReceiver::~RtpReceiver() {}
 
-bool RtpReceiver::handleOneRtp(int track_index, TrackType type, int samplerate, unsigned char *rtp_raw_ptr, unsigned int rtp_raw_len) {
-    if (rtp_raw_len < 12) {
-        WarnL << "rtp包太小:" << rtp_raw_len;
+bool RtpReceiver::handleOneRtp(int index, TrackType type, int sample_rate, uint8_t *ptr, size_t len) {
+    if (len < RtpPacket::kRtpHeaderSize) {
+        WarnL << "rtp包太小:" << len;
         return false;
     }
-
-    uint8_t padding = 0;
-    if (rtp_raw_ptr[0] & 0x20) {
-        //获取padding大小
-        padding = rtp_raw_ptr[rtp_raw_len - 1];
-        //移除padding flag
-        rtp_raw_ptr[0] &= ~0x20;
-        //移除padding字节
-        rtp_raw_len -= padding;
+    if (len > RTP_MAX_SIZE) {
+        WarnL << "超大的rtp包:" << len << " > " << RTP_MAX_SIZE;
+        return false;
     }
-
-    auto rtp_ptr = _rtp_pool.obtain();
-    auto &rtp = *rtp_ptr;
-
-    rtp.type = type;
-    rtp.interleaved = 2 * type;
-    rtp.mark = rtp_raw_ptr[1] >> 7;
-    rtp.PT = rtp_raw_ptr[1] & 0x7F;
-
-    //序列号,内存对齐
-    memcpy(&rtp.sequence, rtp_raw_ptr + 2, 2);
-    rtp.sequence = ntohs(rtp.sequence);
-
-    //时间戳,内存对齐
-    memcpy(&rtp.timeStamp, rtp_raw_ptr + 4, 4);
-    rtp.timeStamp = ntohl(rtp.timeStamp);
-
-    if (!samplerate) {
+    if (!sample_rate) {
         //无法把时间戳转换成毫秒
         return false;
     }
-    //时间戳转换成毫秒
-    rtp.timeStamp = rtp.timeStamp * 1000LL / samplerate;
+    RtpHeader *header = (RtpHeader *) ptr;
+    if (header->version != RtpPacket::kRtpVersion) {
+        throw BadRtpException("非法的rtp，version字段非法");
+    }
+    if (!header->getPayloadSize(len)) {
+        //无有效负载的rtp包
+        return false;
+    }
 
-    //ssrc,内存对齐
-    memcpy(&rtp.ssrc, rtp_raw_ptr + 8, 4);
-    rtp.ssrc = ntohl(rtp.ssrc);
+    //比对缓存ssrc
+    auto ssrc = ntohl(header->ssrc);
 
-    if (_ssrc[track_index] != rtp.ssrc) {
-        if (_ssrc[track_index] == 0) {
-            //保存SSRC至track对象
-            _ssrc[track_index] = rtp.ssrc;
-        } else {
-            //ssrc错误
-            WarnL << "ssrc错误:" << rtp.ssrc << " != " << _ssrc[track_index];
-            if (_ssrc_err_count[track_index]++ > 10) {
-                //ssrc切换后清除老数据
-                WarnL << "ssrc更换:" << _ssrc[track_index] << " -> " << rtp.ssrc;
-                _rtp_sortor[track_index].clear();
-                _ssrc[track_index] = rtp.ssrc;
-            }
+    if (!_ssrc[index]) {
+        //记录并锁定ssrc
+        _ssrc[index] = ssrc;
+        _ssrc_alive[index].resetTime();
+    } else if (_ssrc[index] == ssrc) {
+        //ssrc匹配正确,刷新计时器
+        _ssrc_alive[index].resetTime();
+    } else {
+        //ssrc错误
+        if (_ssrc_alive[index].elapsedTime() < 10 * 1000) {
+            //接受正确ssrc的rtp在10秒内，那么我们认为存在多路rtp,忽略掉ssrc不匹配的rtp
+            WarnL << "ssrc不匹配,rtp已丢弃:" << ssrc << " != " << _ssrc[index];
             return false;
         }
+        InfoL << "rtp流ssrc切换:" << _ssrc[index] << " -> " << ssrc;
+        _ssrc[index] = ssrc;
+        _ssrc_alive[index].resetTime();
     }
 
-    //ssrc匹配正确，不匹配计数清零
-    _ssrc_err_count[track_index] = 0;
+    auto rtp = RtpPacket::create();
+    //需要添加4个字节的rtp over tcp头
+    rtp->setCapacity(RtpPacket::kRtpTcpHeaderSize + len);
+    rtp->setSize(RtpPacket::kRtpTcpHeaderSize + len);
+    rtp->sample_rate = sample_rate;
+    rtp->type = type;
 
-    //获取rtp中媒体数据偏移量
-    rtp.offset = 12 + 4;
-    int csrc = rtp_raw_ptr[0] & 0x0f;
-    int ext = rtp_raw_ptr[0] & 0x10;
-    rtp.offset += 4 * csrc;
-    if (ext && rtp_raw_len >= rtp.offset) {
-        /* calculate the header extension length (stored as number of 32-bit words) */
-        ext = (AV_RB16(rtp_raw_ptr + rtp.offset - 2) + 1) << 2;
-        rtp.offset += ext;
-    }
+    //赋值4个字节的rtp over tcp头
+    uint8_t *data = (uint8_t *) rtp->data();
+    data[0] = '$';
+    data[1] = 2 * type;
+    data[2] = (len >> 8) & 0xFF;
+    data[3] = len & 0xFF;
+    //拷贝rtp
+    memcpy(&data[4], ptr, len);
 
-    if (rtp_raw_len + 4 <= rtp.offset) {
-        WarnL << "无有效负载的rtp包:" << rtp_raw_len << " <= " << (int) rtp.offset;
-        return false;
-    }
-
-    if (rtp_raw_len > RTP_MAX_SIZE) {
-        WarnL << "超大的rtp包:" << rtp_raw_len << " > " << RTP_MAX_SIZE;
-        return false;
-    }
-
-    //设置rtp负载长度
-    rtp.setCapacity(rtp_raw_len + 4);
-    rtp.setSize(rtp_raw_len + 4);
-    uint8_t *payload_ptr = (uint8_t *) rtp.data();
-    payload_ptr[0] = '$';
-    payload_ptr[1] = rtp.interleaved;
-    payload_ptr[2] = rtp_raw_len >> 8;
-    payload_ptr[3] = (rtp_raw_len & 0x00FF);
-    //拷贝rtp负载
-    memcpy(payload_ptr + 4, rtp_raw_ptr, rtp_raw_len);
-    //排序rtp
-    sortRtp(std::move(rtp_ptr), track_index);
+    onBeforeRtpSorted(rtp, index);
+    auto seq = rtp->getSeq();
+    _rtp_sortor[index].sortPacket(seq, std::move(rtp));
     return true;
-}
-
-void RtpReceiver::sortRtp(const RtpPacket::Ptr &rtp,int track_index){
-    _rtp_sortor[track_index].sortPacket(rtp->sequence, rtp);
 }
 
 void RtpReceiver::clear() {
     CLEAR_ARR(_ssrc);
-    CLEAR_ARR(_ssrc_err_count);
     for (auto &sortor : _rtp_sortor) {
         sortor.clear();
     }
 }
 
-void RtpReceiver::setPoolSize(int size) {
-    _rtp_pool.setSize(size);
+size_t RtpReceiver::getJitterSize(int index) const{
+    return _rtp_sortor[index].getJitterSize();
 }
 
-int RtpReceiver::getJitterSize(int track_index){
-    return _rtp_sortor[track_index].getJitterSize();
+size_t RtpReceiver::getCycleCount(int index) const{
+    return _rtp_sortor[index].getCycleCount();
 }
 
-int RtpReceiver::getCycleCount(int track_index){
-    return _rtp_sortor[track_index].getCycleCount();
+uint32_t RtpReceiver::getSSRC(int index) const{
+    return _ssrc[index];
 }
-
 
 }//namespace mediakit

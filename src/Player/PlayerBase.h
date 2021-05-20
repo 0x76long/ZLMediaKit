@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -19,6 +19,7 @@
 #include "Util/mini.h"
 #include "Util/RingBuffer.h"
 #include "Common/MediaSource.h"
+#include "Common/MediaSink.h"
 #include "Extension/Frame.h"
 #include "Extension/Track.h"
 using namespace toolkit;
@@ -103,7 +104,7 @@ public:
      * 设置一个MediaSource，直接生产rtsp/rtmp代理
      * @param src
      */
-    virtual void setMediaSouce(const MediaSource::Ptr & src) {}
+    virtual void setMediaSource(const MediaSource::Ptr & src) {}
 
     /**
      * 获取丢包率，只支持rtsp
@@ -181,9 +182,9 @@ public:
         return Parent::seekTo(fProgress);
     }
 
-    void setMediaSouce(const MediaSource::Ptr & src) override {
+    void setMediaSource(const MediaSource::Ptr & src) override {
         if (_delegate) {
-            _delegate->setMediaSouce(src);
+            _delegate->setMediaSource(src);
         }
         _pMediaSrc = src;
     }
@@ -227,18 +228,10 @@ protected:
     MediaSource::Ptr _pMediaSrc;
 };
 
-
-class Demuxer : public PlayerBase{
+class Demuxer : public PlayerBase, public TrackListener{
 public:
-    class Listener{
-    public:
-        Listener() = default;
-        virtual ~Listener() = default;
-        virtual void onAddTrack(const Track::Ptr &track) = 0;
-    };
-
-    Demuxer(){};
-    virtual ~Demuxer(){};
+    Demuxer() = default;
+    ~Demuxer() override = default;
 
     /**
      * 返回是否完成初始化完毕
@@ -267,15 +260,19 @@ public:
     /**
      * 设置track监听器
      */
-    void setTrackListener(Listener *listener);
+    void setTrackListener(TrackListener *listener);
+
 protected:
-    void onAddTrack(const Track::Ptr &track);
+    void addTrack(const Track::Ptr &track) override;
+    void addTrackCompleted() override;
+    void resetTracks() override;
+
 protected:
-    Listener *_listener = nullptr;
+    float _fDuration = 0;
+    Ticker _ticker;
     AudioTrack::Ptr _audioTrack;
     VideoTrack::Ptr _videoTrack;
-    Ticker _ticker;
-    float _fDuration = 0;
+    TrackListener *_listener = nullptr;
 };
 
 } /* namespace mediakit */

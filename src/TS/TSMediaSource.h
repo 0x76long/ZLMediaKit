@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -30,19 +30,8 @@ public:
     uint32_t time_stamp = 0;
 };
 
-//TS直播合并写策略类
-class TSFlushPolicy : public FlushPolicy{
-public:
-    TSFlushPolicy() = default;
-    ~TSFlushPolicy() = default;
-
-    uint32_t getStamp(const TSPacket::Ptr &packet) {
-        return packet->time_stamp;
-    }
-};
-
 //TS直播源
-class TSMediaSource : public MediaSource, public RingDelegate<TSPacket::Ptr>, public PacketCache<TSPacket, TSFlushPolicy>{
+class TSMediaSource : public MediaSource, public RingDelegate<TSPacket::Ptr>, public PacketCache<TSPacket>{
 public:
     using PoolType = ResourcePool<TSPacket>;
     using Ptr = std::shared_ptr<TSMediaSource>;
@@ -76,21 +65,22 @@ public:
      * @param key 是否为关键帧第一个包
      */
     void onWrite(TSPacket::Ptr packet, bool key) override {
-        _speed += packet->size();
+        _speed[TrackVideo] += packet->size();
         if (!_ring) {
             createRing();
         }
         if (key) {
             _have_video = true;
         }
-        PacketCache<TSPacket, TSFlushPolicy>::inputPacket(true, std::move(packet), key);
+        auto stamp = packet->time_stamp;
+        PacketCache<TSPacket>::inputPacket(stamp, true, std::move(packet), key);
     }
 
     /**
      * 情况GOP缓存
      */
     void clearCache() override {
-        PacketCache<TSPacket, TSFlushPolicy>::clearCache();
+        PacketCache<TSPacket>::clearCache();
         _ring->clearCache();
     }
 

@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -56,11 +56,11 @@ private:
     void setMetaData(AMFDecoder &dec);
 
     void onSendMedia(const RtmpPacket::Ptr &pkt);
-    void onSendRawData(const Buffer::Ptr &buffer) override{
+    void onSendRawData(Buffer::Ptr buffer) override{
         _total_bytes += buffer->size();
-        send(buffer);
+        send(std::move(buffer));
     }
-    void onRtmpChunk(RtmpPacket &chunk_data) override;
+    void onRtmpChunk(RtmpPacket::Ptr chunk_data) override;
 
     template<typename first, typename second>
     inline void sendReply(const char *str, const first &reply, const second &status) {
@@ -98,8 +98,8 @@ private:
     //数据接收超时计时器
     Ticker _ticker;
     MediaInfo _media_info;
-
     std::weak_ptr<RtmpMediaSource> _player_src;
+    AMFValue _publisher_metadata;
     std::shared_ptr<RtmpMediaSourceImp> _publisher_src;
     RtmpMediaSource::RingType::RingReader::Ptr _ring_reader;
 };

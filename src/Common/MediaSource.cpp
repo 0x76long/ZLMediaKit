@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -14,22 +14,28 @@
 #include "Network/sockutil.h"
 #include "Network/TcpSession.h"
 using namespace toolkit;
+
+namespace toolkit {
+    StatisticImp(mediakit::MediaSource);
+}
+
 namespace mediakit {
 
 recursive_mutex s_media_source_mtx;
 MediaSource::SchemaVhostAppStreamMap s_media_source_map;
 
 string getOriginTypeString(MediaOriginType type){
-#define SWITCH_CASE(type) case type : return #type
+#define SWITCH_CASE(type) case MediaOriginType::type : return #type
     switch (type) {
-        SWITCH_CASE(MediaOriginType::unknown);
-        SWITCH_CASE(MediaOriginType::rtmp_push);
-        SWITCH_CASE(MediaOriginType::rtsp_push);
-        SWITCH_CASE(MediaOriginType::rtp_push);
-        SWITCH_CASE(MediaOriginType::pull);
-        SWITCH_CASE(MediaOriginType::ffmpeg_pull);
-        SWITCH_CASE(MediaOriginType::mp4_vod);
-        SWITCH_CASE(MediaOriginType::device_chn);
+        SWITCH_CASE(unknown);
+        SWITCH_CASE(rtmp_push);
+        SWITCH_CASE(rtsp_push);
+        SWITCH_CASE(rtp_push);
+        SWITCH_CASE(pull);
+        SWITCH_CASE(ffmpeg_pull);
+        SWITCH_CASE(mp4_vod);
+        SWITCH_CASE(device_chn);
+        default : return "unknown";
     }
 }
 
@@ -67,8 +73,11 @@ const string& MediaSource::getId() const {
     return _stream_id;
 }
 
-int MediaSource::getBytesSpeed(){
-    return _speed.getSpeed();
+int MediaSource::getBytesSpeed(TrackType type){
+    if(type == TrackInvalid){
+        return _speed[TrackVideo].getSpeed() + _speed[TrackAudio].getSpeed();
+    }
+    return _speed[type].getSpeed();
 }
 
 uint64_t MediaSource::getCreateStamp() const {
@@ -92,8 +101,19 @@ void MediaSource::setListener(const std::weak_ptr<MediaSourceEvent> &listener){
     _listener = listener;
 }
 
-const std::weak_ptr<MediaSourceEvent>& MediaSource::getListener() const{
-    return _listener;
+std::weak_ptr<MediaSourceEvent> MediaSource::getListener(bool next) const{
+    if (!next) {
+        return _listener;
+    }
+    auto listener = dynamic_pointer_cast<MediaSourceEventInterceptor>(_listener.lock());
+    if (!listener) {
+        //不是MediaSourceEventInterceptor对象或者对象已经销毁
+        return _listener;
+    }
+    //获取被拦截的对象
+    auto next_obj = listener->getDelegate();
+    //有则返回之
+    return next_obj ? next_obj : _listener;
 }
 
 int MediaSource::totalReaderCount(){
@@ -151,13 +171,13 @@ void MediaSource::onReaderChanged(int size) {
     }
 }
 
-bool MediaSource::setupRecord(Recorder::type type, bool start, const string &custom_path){
+bool MediaSource::setupRecord(Recorder::type type, bool start, const string &custom_path, size_t max_second){
     auto listener = _listener.lock();
     if (!listener) {
         WarnL << "未设置MediaSource的事件监听者，setupRecord失败:" << getSchema() << "/" << getVhost() << "/" << getApp() << "/" << getId();
         return false;
     }
-    return listener->setupRecord(*this, type, start, custom_path);
+    return listener->setupRecord(*this, type, start, custom_path, max_second);
 }
 
 bool MediaSource::isRecording(Recorder::type type){
@@ -168,21 +188,21 @@ bool MediaSource::isRecording(Recorder::type type){
     return listener->isRecording(*this, type);
 }
 
-void MediaSource::startSendRtp(const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb){
+void MediaSource::startSendRtp(const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb){
     auto listener = _listener.lock();
     if (!listener) {
-        cb(SockException(Err_other, "尚未设置事件监听器"));
+        cb(0, SockException(Err_other, "尚未设置事件监听器"));
         return;
     }
-    return listener->startSendRtp(*this, dst_url, dst_port, ssrc, is_udp, cb);
+    return listener->startSendRtp(*this, dst_url, dst_port, ssrc, is_udp, src_port, cb);
 }
 
-bool MediaSource::stopSendRtp() {
+bool MediaSource::stopSendRtp(const string &ssrc) {
     auto listener = _listener.lock();
     if (!listener) {
         return false;
     }
-    return listener->stopSendRtp(*this);
+    return listener->stopSendRtp(*this, ssrc);
 }
 
 void MediaSource::for_each_media(const function<void(const MediaSource::Ptr &src)> &cb) {
@@ -287,14 +307,22 @@ static void findAsync_l(const MediaInfo &info, const std::shared_ptr<TcpSession>
         return;
     }
 
-    void *listener_tag = session.get();
-    weak_ptr<TcpSession> weak_session = session;
-
     GET_CONFIG(int, maxWaitMS, General::kMaxStreamWaitTimeMS);
-    auto on_timeout = session->getPoller()->doDelayTask(maxWaitMS, [cb, listener_tag]() {
+    void *listener_tag = session.get();
+    auto poller = session->getPoller();
+    std::shared_ptr<atomic_flag> invoked(new atomic_flag{false});
+    auto cb_once = [cb, invoked](const MediaSource::Ptr &src) {
+        if (invoked->test_and_set()) {
+            //回调已经执行过了
+            return;
+        }
+        cb(src);
+    };
+
+    auto on_timeout = poller->doDelayTask(maxWaitMS, [cb_once, listener_tag]() {
         //最多等待一定时间，如果这个时间内，流未注册上，那么返回未找到流
         NoticeCenter::Instance().delListener(listener_tag, Broadcast::kBroadcastMediaChanged);
-        cb(nullptr);
+        cb_once(nullptr);
         return 0;
     });
 
@@ -305,20 +333,8 @@ static void findAsync_l(const MediaInfo &info, const std::shared_ptr<TcpSession>
         NoticeCenter::Instance().delListener(listener_tag, Broadcast::kBroadcastMediaChanged);
     };
 
-    function<void()> close_player = [cb, cancel_all]() {
-        cancel_all();
-        //告诉播放器，流不存在，这样会立即断开播放器
-        cb(nullptr);
-    };
-
-    auto on_regist = [weak_session, info, cb, cancel_all](BroadcastMediaChangedArgs) {
-        auto strong_session = weak_session.lock();
-        if (!strong_session) {
-            //自己已经销毁
-            cancel_all();
-            return;
-        }
-
+    weak_ptr<TcpSession> weak_session = session;
+    auto on_register = [weak_session, info, cb_once, cancel_all, poller](BroadcastMediaChangedArgs) {
         if (!bRegist ||
             sender.getSchema() != info._schema ||
             sender.getVhost() != info._vhost ||
@@ -327,23 +343,30 @@ static void findAsync_l(const MediaInfo &info, const std::shared_ptr<TcpSession>
             //不是自己感兴趣的事件，忽略之
             return;
         }
-
-        cancel_all();
-
-        //播发器请求的流终于注册上了，切换到自己的线程再回复
-        strong_session->async([weak_session, info, cb]() {
-            auto strongSession = weak_session.lock();
-            if (!strongSession) {
+        poller->async([weak_session, cancel_all, info, cb_once]() {
+            cancel_all();
+            auto strong_session = weak_session.lock();
+            if (!strong_session) {
+                //自己已经销毁
                 return;
             }
+            //播发器请求的流终于注册上了，切换到自己的线程再回复
             DebugL << "收到媒体注册事件,回复播放器:" << info._schema << "/" << info._vhost << "/" << info._app << "/" << info._streamid;
             //再找一遍媒体源，一般能找到
-            findAsync_l(info, strongSession, false, cb);
+            findAsync_l(info, strong_session, false, cb_once);
         }, false);
     };
 
     //监听媒体注册事件
-    NoticeCenter::Instance().addListener(listener_tag, Broadcast::kBroadcastMediaChanged, on_regist);
+    NoticeCenter::Instance().addListener(listener_tag, Broadcast::kBroadcastMediaChanged, on_register);
+
+    function<void()> close_player = [cb_once, cancel_all, poller]() {
+        poller->async([cancel_all, cb_once]() {
+            cancel_all();
+            //告诉播放器，流不存在，这样会立即断开播放器
+            cb_once(nullptr);
+        });
+    };
     //广播未找到流,此时可以立即去拉流，这样还来得及
     NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastNotFoundStream, info, static_cast<SockInfo &>(*session), close_player);
 }
@@ -451,7 +474,7 @@ void MediaInfo::parse(const string &url_in){
     }
     if (split_vec.size() > 2) {
         string stream_id;
-        for (int i = 2; i < split_vec.size(); ++i) {
+        for (size_t i = 2; i < split_vec.size(); ++i) {
             stream_id.append(split_vec[i] + "/");
         }
         if (stream_id.back() == '/') {
@@ -497,6 +520,7 @@ MediaSource::Ptr MediaSource::createFromMP4(const string &schema, const string &
 void MediaSourceEvent::onReaderChanged(MediaSource &sender, int size){
     if (size || totalReaderCount(sender)) {
         //还有人观看该视频，不触发关闭事件
+        _async_close_timer = nullptr;
         return;
     }
     //没有任何人观看该视频源，表明该源可以关闭了
@@ -506,7 +530,7 @@ void MediaSourceEvent::onReaderChanged(MediaSource &sender, int size){
     bool is_mp4_vod = sender.getApp() == record_app;
     weak_ptr<MediaSource> weak_sender = sender.shared_from_this();
 
-    _async_close_timer = std::make_shared<Timer>(stream_none_reader_delay / 1000.0, [weak_sender, is_mp4_vod]() {
+    _async_close_timer = std::make_shared<Timer>(stream_none_reader_delay / 1000.0f, [weak_sender, is_mp4_vod]() {
         auto strong_sender = weak_sender.lock();
         if (!strong_sender) {
             //对象已经销毁
@@ -603,12 +627,12 @@ void MediaSourceEventInterceptor::onRegist(MediaSource &sender, bool regist) {
     }
 }
 
-bool MediaSourceEventInterceptor::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) {
+bool MediaSourceEventInterceptor::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) {
     auto listener = _listener.lock();
     if (!listener) {
         return false;
     }
-    return listener->setupRecord(sender, type, start, custom_path);
+    return listener->setupRecord(sender, type, start, custom_path, max_second);
 }
 
 bool MediaSourceEventInterceptor::isRecording(MediaSource &sender, Recorder::type type) {
@@ -627,26 +651,37 @@ vector<Track::Ptr> MediaSourceEventInterceptor::getTracks(MediaSource &sender, b
     return listener->getTracks(sender, trackReady);
 }
 
-void MediaSourceEventInterceptor::startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb){
+void MediaSourceEventInterceptor::startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb){
     auto listener = _listener.lock();
     if (listener) {
-        listener->startSendRtp(sender, dst_url, dst_port, ssrc, is_udp, cb);
+        listener->startSendRtp(sender, dst_url, dst_port, ssrc, is_udp, src_port, cb);
     } else {
-        MediaSourceEvent::startSendRtp(sender, dst_url, dst_port, ssrc, is_udp, cb);
+        MediaSourceEvent::startSendRtp(sender, dst_url, dst_port, ssrc, is_udp, src_port, cb);
     }
 }
 
-bool MediaSourceEventInterceptor::stopSendRtp(MediaSource &sender){
+bool MediaSourceEventInterceptor::stopSendRtp(MediaSource &sender, const string &ssrc){
     auto listener = _listener.lock();
     if (listener) {
-        return listener->stopSendRtp(sender);
+        return listener->stopSendRtp(sender, ssrc);
     }
     return false;
 }
 
+void MediaSourceEventInterceptor::setDelegate(const std::weak_ptr<MediaSourceEvent> &listener) {
+    if (listener.lock().get() == this) {
+        throw std::invalid_argument("can not set self as a delegate");
+    }
+    _listener = listener;
+}
+
+std::shared_ptr<MediaSourceEvent> MediaSourceEventInterceptor::getDelegate() const{
+    return _listener.lock();
+}
+
 /////////////////////////////////////FlushPolicy//////////////////////////////////////
 
-static bool isFlushAble_default(bool is_video, uint32_t last_stamp, uint32_t new_stamp, int cache_size) {
+static bool isFlushAble_default(bool is_video, uint64_t last_stamp, uint64_t new_stamp, size_t cache_size) {
     if (new_stamp + 500 < last_stamp) {
         //时间戳回退比较大(可能seek中)，由于rtp中时间戳是pts，是可能存在一定程度的回退的
         return true;
@@ -656,7 +691,7 @@ static bool isFlushAble_default(bool is_video, uint32_t last_stamp, uint32_t new
     return last_stamp != new_stamp || cache_size >= 1024;
 }
 
-static bool isFlushAble_merge(bool is_video, uint32_t last_stamp, uint32_t new_stamp, int cache_size, int merge_ms) {
+static bool isFlushAble_merge(bool is_video, uint64_t last_stamp, uint64_t new_stamp, size_t cache_size, int merge_ms) {
     if (new_stamp + 500 < last_stamp) {
         //时间戳回退比较大(可能seek中)，由于rtp中时间戳是pts，是可能存在一定程度的回退的
         return true;
@@ -672,7 +707,7 @@ static bool isFlushAble_merge(bool is_video, uint32_t last_stamp, uint32_t new_s
     return cache_size >= 1024;
 }
 
-bool FlushPolicy::isFlushAble(bool is_video, bool is_key, uint32_t new_stamp, int cache_size) {
+bool FlushPolicy::isFlushAble(bool is_video, bool is_key, uint64_t new_stamp, size_t cache_size) {
     bool flush_flag = false;
     if (is_key && is_video) {
         //遇到关键帧flush掉前面的数据，确保关键帧为该组数据的第一帧，确保GOP缓存有效

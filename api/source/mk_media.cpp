@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -131,22 +131,22 @@ API_EXPORT void API_CALL mk_media_release(mk_media ctx) {
     delete obj;
 }
 
-API_EXPORT void API_CALL mk_media_init_video(mk_media ctx, int track_id, int width, int height, int fps){
+API_EXPORT void API_CALL mk_media_init_video(mk_media ctx, int codec_id, int width, int height, float fps){
     assert(ctx);
     MediaHelper::Ptr *obj = (MediaHelper::Ptr *) ctx;
     VideoInfo info;
-    info.codecId = (CodecId)track_id;
+    info.codecId = (CodecId)codec_id;
     info.iFrameRate = fps;
     info.iWidth = width;
     info.iHeight = height;
     (*obj)->getChannel()->initVideo(info);
 }
 
-API_EXPORT void API_CALL mk_media_init_audio(mk_media ctx, int track_id, int sample_rate, int channels, int sample_bit){
+API_EXPORT void API_CALL mk_media_init_audio(mk_media ctx, int codec_id, int sample_rate, int channels, int sample_bit){
     assert(ctx);
     MediaHelper::Ptr *obj = (MediaHelper::Ptr *) ctx;
     AudioInfo info;
-    info.codecId = (CodecId)track_id;
+    info.codecId = (CodecId)codec_id;
     info.iSampleRate = sample_rate;
     info.iChannel = channels;
     info.iSampleBit = sample_bit;
@@ -178,17 +178,31 @@ API_EXPORT void API_CALL mk_media_input_aac(mk_media ctx, void *data, int len, u
 }
 
 API_EXPORT void API_CALL mk_media_input_pcm(mk_media ctx, void *data , int len, uint32_t pts){
-#ifdef ENABLE_FAAC
 	assert(ctx && data && len > 0);
 	MediaHelper::Ptr* obj = (MediaHelper::Ptr*) ctx;
 	(*obj)->getChannel()->inputPCM((char*)data, len, pts);
-#else
-    WarnL << "aac编码未启用,该方法无效,编译时请打开ENABLE_FAAC选项";
-#endif //ENABLE_FAAC
 }
 
 API_EXPORT void API_CALL mk_media_input_audio(mk_media ctx, void* data, int len, uint32_t dts){
     assert(ctx && data && len > 0);
     MediaHelper::Ptr* obj = (MediaHelper::Ptr*) ctx;
     (*obj)->getChannel()->inputAudio((char*)data, len, dts);
+}
+
+API_EXPORT void API_CALL mk_media_start_send_rtp(mk_media ctx, const char *dst_url, uint16_t dst_port, const char *ssrc, int is_udp, on_mk_media_send_rtp_result cb, void *user_data){
+    assert(ctx && dst_url && ssrc);
+    MediaHelper::Ptr* obj = (MediaHelper::Ptr*) ctx;
+    //sender参数无用
+    (*obj)->getChannel()->startSendRtp(*(MediaSource *) 1, dst_url, dst_port, ssrc, is_udp, 0, [cb, user_data](uint16_t local_port, const SockException &ex){
+        if (cb) {
+            cb(user_data, local_port, ex.getErrCode(), ex.what());
+        }
+    });
+}
+
+API_EXPORT int API_CALL mk_media_stop_send_rtp(mk_media ctx){
+    assert(ctx);
+    MediaHelper::Ptr *obj = (MediaHelper::Ptr *) ctx;
+    //sender参数无用
+    return (*obj)->getChannel()->stopSendRtp(*(MediaSource *) 1, "");
 }

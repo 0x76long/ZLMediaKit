@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -86,7 +86,7 @@ void rePushDelay(const EventPoller::Ptr &poller,
                  const string &stream,
                  const string &filePath,
                  const string &url) {
-    g_timer = std::make_shared<Timer>(2,[poller,schema,vhost,app, stream, filePath,url]() {
+    g_timer = std::make_shared<Timer>(2.0f,[poller,schema,vhost,app, stream, filePath,url]() {
         InfoL << "Re-Publishing...";
         //重新推流
         createPusher(poller,schema,vhost,app, stream, filePath,url);
@@ -102,7 +102,7 @@ int domain(const string & filePath,const string & pushUrl){
     Logger::Instance().setWriter(std::make_shared<AsyncLogWriter>());
     auto poller = EventPollerPool::Instance().getPoller();
     //vhost/app/stream可以随便自己填，现在不限制app应用名了
-    createPusher(poller,FindField(pushUrl.data(), nullptr,"://"),DEFAULT_VHOST,"live","stream",filePath,pushUrl);
+    createPusher(poller,FindField(pushUrl.data(), nullptr,"://").substr(0,4),DEFAULT_VHOST,"live","stream",filePath,pushUrl);
 
     //设置退出信号处理函数
     static semaphore sem;

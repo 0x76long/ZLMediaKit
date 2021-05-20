@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -12,7 +12,7 @@
 #define ZLMEDIAKIT_MULTIMEDIASOURCEMUXER_H
 
 #include "Common/Stamp.h"
-#include "Rtp/PSRtpSender.h"
+#include "Rtp/RtpSender.h"
 #include "Record/Recorder.h"
 #include "Record/HlsRecorder.h"
 #include "Record/HlsMediaSource.h"
@@ -44,7 +44,7 @@ private:
     int totalReaderCount() const;
     void setTimeStamp(uint32_t stamp);
     void setTrackListener(Listener *listener);
-    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path);
+    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second);
     bool isRecording(MediaSource &sender, Recorder::type type);
     bool isEnabled();
     void onTrackReady(const Track::Ptr & track) override;
@@ -125,7 +125,7 @@ public:
      * @param custom_path 开启录制时，指定自定义路径
      * @return 是否设置成功
      */
-    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) override;
+    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) override;
 
     /**
      * 获取录制状态
@@ -142,13 +142,13 @@ public:
      * @param is_udp 是否为udp
      * @param cb 启动成功或失败回调
      */
-    void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb) override;
+    void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb) override;
 
     /**
      * 停止ps-rtp发送
      * @return 是否成功
      */
-    bool stopSendRtp(MediaSource &sender) override;
+    bool stopSendRtp(MediaSource &sender, const string &ssrc) override;
 
     /////////////////////////////////MediaSinkInterface override/////////////////////////////////
 
@@ -183,12 +183,17 @@ public:
     void onAllTrackReady() override;
 
 private:
+    bool _is_enable = false;
+    Ticker _last_check;
     Stamp _stamp[2];
     MultiMuxerPrivate::Ptr _muxer;
     std::weak_ptr<MultiMuxerPrivate::Listener> _track_listener;
 #if defined(ENABLE_RTPPROXY)
-    PSRtpSender::Ptr _ps_rtp_sender;
+    mutex _rtp_sender_mtx;
+	unordered_map<string, RtpSender::Ptr> _rtp_sender;
 #endif //ENABLE_RTPPROXY
+    //对象个数统计
+    ObjectStatistic<MultiMediaSourceMuxer> _statistic;
 };
 
 }//namespace mediakit

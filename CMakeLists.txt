@@ -20,13 +20,14 @@ set(RELEASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/release)
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     SET(LIBRARY_OUTPUT_PATH ${RELEASE_DIR}/linux/${BuildType})
     SET(EXECUTABLE_OUTPUT_PATH ${RELEASE_DIR}/linux/${BuildType})
-    add_compile_options(-fPIC)
+    add_compile_options(-fPIC -Wall -Wno-unused-variable -Wno-unused-value)
 elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
     SET(LIBRARY_OUTPUT_PATH ${RELEASE_DIR}/windows/${BuildType})
     SET(EXECUTABLE_OUTPUT_PATH ${RELEASE_DIR}/windows/${BuildType})
 elseif (CMAKE_SYSTEM_NAME MATCHES "Darwin")
     SET(LIBRARY_OUTPUT_PATH ${RELEASE_DIR}/mac/${BuildType})
     SET(EXECUTABLE_OUTPUT_PATH ${RELEASE_DIR}/mac/${BuildType})
+    add_compile_options(-Wall -Wno-unused-variable -Wno-unused-value)
 endif ()
 
 LINK_DIRECTORIES(${LIBRARY_OUTPUT_PATH})
@@ -52,8 +53,31 @@ option(ENABLE_API "Enable C API SDK" true)
 option(ENABLE_CXX_API "Enable C++ API SDK" false)
 option(ENABLE_TESTS "Enable Tests" true)
 option(ENABLE_SERVER "Enable Server" true)
+option(ENABLE_MEM_DEBUG "Enable Memory Debug" false)
+option(ENABLE_ASAN "Enable Address Sanitize" false)
+
+if (ENABLE_MEM_DEBUG)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-wrap,free  -Wl,-wrap,malloc -Wl,-wrap,realloc -Wl,-wrap,calloc")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wl,-wrap,free  -Wl,-wrap,malloc -Wl,-wrap,realloc -Wl,-wrap,calloc")
+    add_definitions(-DENABLE_MEM_DEBUG)
+    message(STATUS "已启用内存调试功能")
+endif ()
+
+if (ENABLE_ASAN)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    message(STATUS "已启用Address Sanitize")
+endif ()
 
 set(LINK_LIB_LIST zlmediakit zltoolkit)
+
+#默认链接jemalloc库避免内存碎片
+find_package(JEMALLOC QUIET)
+if(JEMALLOC_FOUND)
+    message(STATUS "found library:\"${JEMALLOC_LIBRARIES}\"")
+    include_directories(${JEMALLOC_INCLUDE_DIR})
+    list(APPEND  LINK_LIB_LIST ${JEMALLOC_LIBRARIES})
+endif()
 
 #查找openssl是否安装
 find_package(OpenSSL QUIET)
@@ -94,17 +118,8 @@ if (FAAC_FOUND AND ENABLE_FAAC)
     list(APPEND LINK_LIB_LIST ${FAAC_LIBRARIES})
 endif ()
 
-if(${CMAKE_BUILD_TYPE} MATCHES "Release")
-    #查找jemalloc是否安装
-    find_package(JEMALLOC QUIET)
-    if(JEMALLOC_FOUND)
-        message(STATUS "found library:\"${JEMALLOC_LIBRARIES}\"")
-        include_directories(${JEMALLOC_INCLUDE_DIR})
-        list(APPEND  LINK_LIB_LIST ${JEMALLOC_LIBRARIES})
-    endif()
-endif()
-
-set(VS_FALGS "/wd4819 /wd4996 /wd4018 /wd4267 /wd4244 /wd4101 /wd4828 /wd4309 /wd4573" )
+#set(VS_FALGS "/wd4819 /wd4996 /wd4018 /wd4267 /wd4244 /wd4101 /wd4828 /wd4309 /wd4573 /wd4996" )
+set(VS_FALGS "/wd4819" )
 
 #添加mpeg用于支持ts生成
 if(ENABLE_HLS)
@@ -167,7 +182,7 @@ if (NOT WIN32)
     list(REMOVE_ITEM ToolKit_src_list ${ToolKit_Root}/win32/getopt.c)
 else()
     #防止Windows.h包含Winsock.h
-    add_definitions(-DWIN32_LEAN_AND_MEAN -DMP4V2_NO_STDINT_DEFS -DOS_WINDOWS)
+    add_definitions(-DWIN32_LEAN_AND_MEAN -DMP4V2_NO_STDINT_DEFS -D_CRT_SECURE_NO_WARNINGS -D_WINSOCK_DEPRECATED_NO_WARNINGS)
 endif ()
 
 #添加库
@@ -180,8 +195,9 @@ if (WIN32)
     set(INSTALL_PATH_LIB $ENV{HOME}/${CMAKE_PROJECT_NAME}/lib)
     set(INSTALL_PATH_INCLUDE $ENV{HOME}/${CMAKE_PROJECT_NAME}/include)
 else ()
-    set(INSTALL_PATH_LIB lib)
+    set(INSTALL_PATH_LIB lib${LIB_SUFFIX})
     set(INSTALL_PATH_INCLUDE include)
+    set(INSTALL_PATH_EXECUTABLE bin)
 endif ()
 
 if(ENABLE_CXX_API)

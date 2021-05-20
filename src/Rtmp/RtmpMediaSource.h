@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -119,7 +119,8 @@ public:
      * @param pkt rtmp包
      */
     void onWrite(RtmpPacket::Ptr pkt, bool = true) override {
-        _speed += pkt->size();
+        bool is_video = pkt->type_id == MSG_VIDEO;
+        _speed[is_video ? TrackVideo : TrackAudio] += pkt->size();
         //保存当前时间戳
         switch (pkt->type_id) {
             case MSG_VIDEO : _track_stamps[TrackVideo] = pkt->time_stamp, _have_video = true; break;
@@ -130,7 +131,10 @@ public:
         if (pkt->isCfgFrame()) {
             lock_guard<recursive_mutex> lock(_mtx);
             _config_frame_map[pkt->type_id] = pkt;
-            return;
+            if (!_ring) {
+                //注册后收到config帧更新到各播放器
+                return;
+            }
         }
 
         if (!_ring) {
@@ -153,8 +157,8 @@ public:
             }
         }
         bool key = pkt->isVideoKeyFrame();
-        bool is_video = pkt->type_id == MSG_VIDEO;
-        PacketCache<RtmpPacket>::inputPacket(is_video, std::move(pkt), key);
+        auto stamp  = pkt->time_stamp;
+        PacketCache<RtmpPacket>::inputPacket(stamp, is_video, std::move(pkt), key);
     }
 
     /**

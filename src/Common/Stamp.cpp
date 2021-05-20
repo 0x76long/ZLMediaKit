@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -55,7 +55,7 @@ void Stamp::revise(int64_t dts, int64_t pts, int64_t &dts_out, int64_t &pts_out,
     }
 
     if (dts_out < _last_dts_out) {
-        WarnL << "dts回退:" << dts_out << " < " << _last_dts_out;
+//        WarnL << "dts回退:" << dts_out << " < " << _last_dts_out;
         dts_out = _last_dts_out;
         pts_out = _last_pts_out;
         return;
@@ -101,7 +101,7 @@ void Stamp::revise_l2(int64_t dts, int64_t pts, int64_t &dts_out, int64_t &pts_o
     }
 
     //pts和dts的差值
-    int pts_dts_diff = pts - dts;
+    int64_t pts_dts_diff = pts - dts;
 
     if (_last_dts_in != dts) {
         //时间戳发生变更

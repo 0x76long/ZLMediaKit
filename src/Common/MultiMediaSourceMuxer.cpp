@@ -1,7 +1,7 @@
 ﻿/*
 * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
 *
-* This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+* This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
 *
 * Use of this source code is governed by MIT license that can be found in the
 * LICENSE file in the root of the source tree. All contributing project authors
@@ -9,7 +9,13 @@
 */
 
 #include <math.h>
+#include "Common/config.h"
 #include "MultiMediaSourceMuxer.h"
+
+namespace toolkit {
+    StatisticImp(mediakit::MultiMediaSourceMuxer);
+}
+
 namespace mediakit {
 
 ///////////////////////////////MultiMuxerPrivate//////////////////////////////////
@@ -101,8 +107,8 @@ int MultiMuxerPrivate::totalReaderCount() const {
            (hls ? hls->readerCount() : 0);
 }
 
-static std::shared_ptr<MediaSinkInterface> makeRecorder(const vector<Track::Ptr> &tracks, Recorder::type type, const string &custom_path, MediaSource &sender){
-    auto recorder = Recorder::createRecorder(type, sender.getVhost(), sender.getApp(), sender.getId(), custom_path);
+static std::shared_ptr<MediaSinkInterface> makeRecorder(MediaSource &sender, const vector<Track::Ptr> &tracks, Recorder::type type, const string &custom_path, size_t max_second){
+    auto recorder = Recorder::createRecorder(type, sender.getVhost(), sender.getApp(), sender.getId(), custom_path, max_second);
     for (auto &track : tracks) {
         recorder->addTrack(track);
     }
@@ -110,12 +116,12 @@ static std::shared_ptr<MediaSinkInterface> makeRecorder(const vector<Track::Ptr>
 }
 
 //此函数可能跨线程调用
-bool MultiMuxerPrivate::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path){
+bool MultiMuxerPrivate::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second){
     switch (type) {
         case Recorder::type_hls : {
             if (start && !_hls) {
                 //开始录制
-                auto hls = dynamic_pointer_cast<HlsRecorder>(makeRecorder(getTracks(true), type, custom_path, sender));
+                auto hls = dynamic_pointer_cast<HlsRecorder>(makeRecorder(sender, getTracks(true), type, custom_path, max_second));
                 if (hls) {
                     //设置HlsMediaSource的事件监听器
                     hls->setListener(_listener);
@@ -130,7 +136,7 @@ bool MultiMuxerPrivate::setupRecord(MediaSource &sender, Recorder::type type, bo
         case Recorder::type_mp4 : {
             if (start && !_mp4) {
                 //开始录制
-                _mp4 = makeRecorder(getTracks(true), type, custom_path, sender);
+                _mp4 = makeRecorder(sender, getTracks(true), type, custom_path, max_second);
             } else if (!start && _mp4) {
                 //停止录制
                 _mp4 = nullptr;
@@ -259,7 +265,7 @@ static string getTrackInfoStr(const TrackSource *track_src){
                 break;
         }
     }
-    return codec_info;
+    return std::move(codec_info);
 }
 
 void MultiMuxerPrivate::onAllTrackReady() {
@@ -291,7 +297,7 @@ MultiMediaSourceMuxer::MultiMediaSourceMuxer(const string &vhost, const string &
 }
 
 void MultiMediaSourceMuxer::setMediaListener(const std::weak_ptr<MediaSourceEvent> &listener) {
-    _listener = listener;
+    setDelegate(listener);
     //拦截事件
     _muxer->setMediaListener(shared_from_this());
 }
@@ -301,7 +307,11 @@ void MultiMediaSourceMuxer::setTrackListener(const std::weak_ptr<MultiMuxerPriva
 }
 
 int MultiMediaSourceMuxer::totalReaderCount() const {
+#if defined(ENABLE_RTPPROXY)
+    return _muxer->totalReaderCount() + (int)_rtp_sender.size();
+#else
     return _muxer->totalReaderCount();
+#endif
 }
 
 void MultiMediaSourceMuxer::setTimeStamp(uint32_t stamp) {
@@ -313,53 +323,69 @@ vector<Track::Ptr> MultiMediaSourceMuxer::getTracks(MediaSource &sender, bool tr
 }
 
 int MultiMediaSourceMuxer::totalReaderCount(MediaSource &sender) {
-    auto listener = _listener.lock();
+    auto listener = getDelegate();
     if (!listener) {
         return totalReaderCount();
     }
     return listener->totalReaderCount(sender);
 }
 
-bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) {
-    return _muxer->setupRecord(sender, type, start, custom_path);
+bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) {
+    return _muxer->setupRecord(sender, type, start, custom_path, max_second);
 }
 
 bool MultiMediaSourceMuxer::isRecording(MediaSource &sender, Recorder::type type) {
     return _muxer->isRecording(sender,type);
 }
 
-void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb){
+void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb){
 #if defined(ENABLE_RTPPROXY)
-    auto ps_rtp_sender = std::make_shared<PSRtpSender>(ssrc);
+    RtpSender::Ptr rtp_sender = std::make_shared<RtpSender>(atoi(ssrc.data()));
     weak_ptr<MultiMediaSourceMuxer> weak_self = shared_from_this();
-    ps_rtp_sender->startSend(dst_url, dst_port, is_udp, [weak_self, ps_rtp_sender, cb](const SockException &ex) {
-        cb(ex);
+    rtp_sender->startSend(dst_url, dst_port, is_udp, src_port, [weak_self, rtp_sender, cb, ssrc](uint16_t local_port, const SockException &ex) {
+        cb(local_port, ex);
         auto strong_self = weak_self.lock();
         if (!strong_self || ex) {
             return;
         }
         for (auto &track : strong_self->_muxer->getTracks(false)) {
-            ps_rtp_sender->addTrack(track);
+            rtp_sender->addTrack(track);
         }
-        ps_rtp_sender->addTrackCompleted();
-        strong_self->_ps_rtp_sender = ps_rtp_sender;
+        rtp_sender->addTrackCompleted();
+        lock_guard<mutex> lck(strong_self->_rtp_sender_mtx);
+        strong_self->_rtp_sender[ssrc] = rtp_sender;
     });
 #else
-    cb(SockException(Err_other, "该功能未启用，编译时请打开ENABLE_RTPPROXY宏"));
+    cb(0, SockException(Err_other, "该功能未启用，编译时请打开ENABLE_RTPPROXY宏"));
 #endif//ENABLE_RTPPROXY
 }
 
-bool MultiMediaSourceMuxer::stopSendRtp(MediaSource &sender){
+bool MultiMediaSourceMuxer::stopSendRtp(MediaSource &sender, const string& ssrc){
 #if defined(ENABLE_RTPPROXY)
-    if (_ps_rtp_sender) {
-        _ps_rtp_sender = nullptr;
-        return true;
+    onceToken token(nullptr, [&]() {
+        //关闭rtp推流，可能触发无人观看事件
+        MediaSourceEventInterceptor::onReaderChanged(sender, totalReaderCount());
+    });
+    if (ssrc.empty()) {
+        //关闭全部
+        lock_guard<mutex> lck(_rtp_sender_mtx);
+        auto size = _rtp_sender.size();
+        _rtp_sender.clear();
+        return size;
     }
-#endif//ENABLE_RTPPROXY
+    //关闭特定的
+    lock_guard<mutex> lck(_rtp_sender_mtx);
+    return _rtp_sender.erase(ssrc);
+#else
     return false;
+#endif//ENABLE_RTPPROXY
 }
 
 void MultiMediaSourceMuxer::addTrack(const Track::Ptr &track) {
+    if (CodecL16 == track->getCodecId()) {
+        WarnL << "L16音频格式目前只支持RTSP协议推流拉流!!!";
+        return;
+    }
     _muxer->addTrack(track);
 }
 
@@ -391,14 +417,14 @@ public:
     ~FrameModifyStamp() override {}
 
     uint32_t dts() const override{
-        return _dts;
+        return (uint32_t)_dts;
     }
 
     uint32_t pts() const override{
-        return _pts;
+        return (uint32_t)_pts;
     }
 
-    uint32_t prefixSize() const override {
+    size_t prefixSize() const override {
         return _frame->prefixSize();
     }
 
@@ -418,7 +444,7 @@ public:
         return _frame->data();
     }
 
-    uint32_t size() const override {
+    size_t size() const override {
         return _frame->size();
     }
 
@@ -441,20 +467,30 @@ void MultiMediaSourceMuxer::inputFrame(const Frame::Ptr &frame_in) {
     _muxer->inputFrame(frame);
 
 #if defined(ENABLE_RTPPROXY)
-    auto ps_rtp_sender = _ps_rtp_sender;
-    if (ps_rtp_sender) {
-        ps_rtp_sender->inputFrame(frame);
+    lock_guard<mutex> lck(_rtp_sender_mtx);
+    for (auto &pr : _rtp_sender) {
+        pr.second->inputFrame(frame);
     }
 #endif //ENABLE_RTPPROXY
 
 }
 
 bool MultiMediaSourceMuxer::isEnabled(){
+    GET_CONFIG(uint32_t, stream_none_reader_delay_ms, General::kStreamNoneReaderDelayMS);
+    if (!_is_enable || _last_check.elapsedTime() > stream_none_reader_delay_ms) {
+        //无人观看时，每次检查是否真的无人观看
+        //有人观看时，则延迟一定时间检查一遍是否无人观看了(节省性能)
 #if defined(ENABLE_RTPPROXY)
-    return (_muxer->isEnabled() || _ps_rtp_sender);
+        _is_enable = (_muxer->isEnabled() || _rtp_sender.size());
 #else
-    return _muxer->isEnabled();
+        _is_enable = _muxer->isEnabled();
 #endif //ENABLE_RTPPROXY
+        if (_is_enable) {
+            //无人观看时，不刷新计时器,因为无人观看时每次都会检查一遍，所以刷新计数器无意义且浪费cpu
+            _last_check.resetTime();
+        }
+    }
+    return _is_enable;
 }
 
 

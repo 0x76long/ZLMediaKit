@@ -13,7 +13,7 @@
 ## 项目特点
 
 - 基于C++11开发，避免使用裸指针，代码稳定可靠，性能优越。
-- 支持多种协议(RTSP/RTMP/HLS/HTTP-FLV/WebSocket-FLV/GB28181/HTTP-TS/WebSocket-TS/HTTP-fMP4/WebSocket-fMP4/MP4),支持协议互转。
+- 支持多种协议(RTSP/RTMP/HLS/HTTP-FLV/WebSocket-FLV/GB28181/HTTP-TS/WebSocket-TS/HTTP-fMP4/WebSocket-fMP4/MP4/WebRTC),支持协议互转。
 - 使用多路复用/多线程/异步网络IO模式开发，并发性能优越，支持海量客户端连接。
 - 代码经过长期大量的稳定性、性能测试，已经在线上商用验证已久。
 - 支持linux、macos、ios、android、windows全平台。
@@ -33,7 +33,7 @@
 
 ## 功能清单
 ### 功能一览
-<img width="800" alt="图片" src="https://user-images.githubusercontent.com/11495632/93857284-f15b5f00-fcec-11ea-894d-83eb656dc235.png">
+<img width="800" alt="功能一览" src="https://user-images.githubusercontent.com/11495632/114176523-d50fce80-996d-11eb-81f8-0a2e2715ba7b.png">
 
 - RTSP[S]
   - RTSP[S] 服务器，支持RTMP/MP4/HLS转RTSP[S],支持亚马逊echo show这样的设备
@@ -85,11 +85,16 @@
   - 支持UDP/TCP国标RTP(PS或TS)推流服务器，可以转换成RTSP/RTMP/HLS等协议
   - 支持RTSP/RTMP/HLS转国标推流客户端，支持TCP/UDP模式，提供相应restful api
   - 支持H264/H265/AAC/G711/OPUS编码
+  - 支持海康ehome推流
 
 - MP4点播与录制
   - 支持录制为FLV/HLS/MP4
   - RTSP/RTMP/HTTP-FLV/WS-FLV支持MP4文件点播，支持seek
   - 支持H264/H265/AAC/G711/OPUS编码
+  
+- WebRTC(体验,请使用dev分支)
+  - 支持WebRTC推流，支持转其他协议
+  - 支持WebRTC播放，支持其他协议转WebRTC     
   
 - 其他
   - 支持丰富的restful api以及web hook事件 
@@ -138,8 +143,8 @@ bash build_docker_images.sh
     - [基于ZLMediaKit分支的管理WEB网站](https://github.com/chenxiaolei/ZLMediaKit_NVR_UI)
     
  - 流媒体管理平台
-   - [功能强大的流媒体控制管理接口平台,支持GB28181](https://github.com/chatop2020/StreamNode)
-   - [GB28181-2016网络视频平台](https://github.com/648540858/wvp-GB28181)
+   - [功能强大的流媒体控制管理接口平台,支持GB28181](https://github.com/chatop2020/AKStream)
+   - [GB28181-2016网络视频平台](https://github.com/648540858/wvp-GB28181-pro)
    - [node-js版本的GB28181平台](https://gitee.com/hfwudao/GB28181_Node_Http)
    - [Go实现的海康ehome服务器](https://github.com/tsingeye/FreeEhome)
 
@@ -208,6 +213,18 @@ bash build_docker_images.sh
 [big panda](<2381267071@qq.com>)
 [tanningzhong](https://github.com/tanningzhong)
 [hctym1995](https://github.com/hctym1995)
+[hewenyuan](https://gitee.com/kingyuanyuan)
+[sunhui](<sunhui200475@163.com>)
+[mirs](fangpengcheng@bilibili.com>)
+[Kevin Cheng](kevin__cheng@outlook.com>)
+[Liu Jiang](root@oopy.org>)
+[along](https://github.com/alongl)
+[qingci](xpy66swsry@gmail.com>)
+[lyg1949](zh.ghlong@qq.com>)
+[zhlong](zh.ghlong@qq.com>)
+[大裤衩](3503207480@qq.com>)
+[droid.chow](droid.chow@gmail.com>)
+[陈晓林](https://github.com/musicwood)
 
 ## 使用案例
 
@@ -222,6 +239,6 @@ bash build_docker_images.sh
 欢迎捐赠以便更好的推动项目的发展，谢谢您的支持!
 同时欢迎捐赠公网服务器用于在线展示效果。
 
-[支付宝](https://gitee.com/xia-chu/other/raw/master/IMG_3919.JPG)
+[支付宝](https://github.com/xia-chu/other/blob/master/IMG_3919.JPG)
 
-[微信](https://gitee.com/xia-chu/other/raw/master/IMG_3920.JPG)
+[微信](https://github.com/xia-chu/other/blob/master/IMG_3920.JPG)

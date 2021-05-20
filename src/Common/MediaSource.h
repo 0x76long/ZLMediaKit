@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -77,15 +77,15 @@ public:
 
     ////////////////////////仅供MultiMediaSourceMuxer对象继承////////////////////////
     // 开启或关闭录制
-    virtual bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) { return false; };
+    virtual bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) { return false; };
     // 获取录制状态
     virtual bool isRecording(MediaSource &sender, Recorder::type type) { return false; };
     // 获取所有track相关信息
     virtual vector<Track::Ptr> getTracks(MediaSource &sender, bool trackReady = true) const { return vector<Track::Ptr>(); };
     // 开始发送ps-rtp
-    virtual void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb) { cb(SockException(Err_other, "not implemented"));};
+    virtual void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb) { cb(0, SockException(Err_other, "not implemented"));};
     // 停止发送ps-rtp
-    virtual bool stopSendRtp(MediaSource &sender) {return false; }
+    virtual bool stopSendRtp(MediaSource &sender, const string &ssrc) {return false; }
 
 private:
     Timer::Ptr _async_close_timer;
@@ -97,6 +97,9 @@ public:
     MediaSourceEventInterceptor(){}
     ~MediaSourceEventInterceptor() override {}
 
+    void setDelegate(const std::weak_ptr<MediaSourceEvent> &listener);
+    std::shared_ptr<MediaSourceEvent> getDelegate() const;
+
     MediaOriginType getOriginType(MediaSource &sender) const override;
     string getOriginUrl(MediaSource &sender) const override;
     std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
@@ -106,13 +109,13 @@ public:
     int totalReaderCount(MediaSource &sender) override;
     void onReaderChanged(MediaSource &sender, int size) override;
     void onRegist(MediaSource &sender, bool regist) override;
-    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) override;
+    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) override;
     bool isRecording(MediaSource &sender, Recorder::type type) override;
     vector<Track::Ptr> getTracks(MediaSource &sender, bool trackReady = true) const override;
-    void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb) override;
-    bool stopSendRtp(MediaSource &sender) override;
+    void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb) override;
+    bool stopSendRtp(MediaSource &sender, const string &ssrc) override;
 
-protected:
+private:
     std::weak_ptr<MediaSourceEvent> _listener;
 };
 
@@ -145,7 +148,7 @@ public:
     /**
      * 添加统计字节
      */
-    BytesSpeed& operator += (uint64_t bytes) {
+    BytesSpeed& operator += (size_t bytes) {
         _bytes += bytes;
         if (_bytes > 1024 * 1024) {
             //数据大于1MB就计算一次网速
@@ -166,12 +169,12 @@ public:
     }
 
 private:
-    uint64_t computeSpeed() {
+    int computeSpeed() {
         auto elapsed = _ticker.elapsedTime();
         if (!elapsed) {
             return _speed;
         }
-        _speed = _bytes * 1000 / elapsed;
+        _speed = (int)(_bytes * 1000 / elapsed);
         _ticker.resetTime();
         _bytes = 0;
         return _speed;
@@ -179,7 +182,7 @@ private:
 
 private:
     int _speed = 0;
-    uint64_t _bytes = 0;
+    size_t _bytes = 0;
     Ticker _ticker;
 };
 
@@ -217,7 +220,7 @@ public:
     virtual void setTimeStamp(uint32_t stamp) {};
 
     // 获取数据速率，单位bytes/s
-    int getBytesSpeed();
+    int getBytesSpeed(TrackType type = TrackInvalid);
     // 获取流创建GMT unix时间戳，单位秒
     uint64_t getCreateStamp() const;
     // 获取流上线时间，单位秒
@@ -226,9 +229,9 @@ public:
     ////////////////MediaSourceEvent相关接口实现////////////////
 
     // 设置监听者
-    void setListener(const std::weak_ptr<MediaSourceEvent> &listener);
+    virtual void setListener(const std::weak_ptr<MediaSourceEvent> &listener);
     // 获取监听者
-    const std::weak_ptr<MediaSourceEvent>& getListener() const;
+    std::weak_ptr<MediaSourceEvent> getListener(bool next = false) const;
 
     // 本协议获取观看者个数，可能返回本协议的观看人数，也可能返回总人数
     virtual int readerCount() = 0;
@@ -249,13 +252,13 @@ public:
     // 该流观看人数变化
     void onReaderChanged(int size);
     // 开启或关闭录制
-    bool setupRecord(Recorder::type type, bool start, const string &custom_path);
+    bool setupRecord(Recorder::type type, bool start, const string &custom_path, size_t max_second);
     // 获取录制状态
     bool isRecording(Recorder::type type);
     // 开始发送ps-rtp
-    void startSendRtp(const string &dst_url, uint16_t dst_port, uint32_t ssrc, bool is_udp, const function<void(const SockException &ex)> &cb);
+    void startSendRtp(const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb);
     // 停止发送ps-rtp
-    bool stopSendRtp();
+    bool stopSendRtp(const string &ssrc);
 
     ////////////////static方法，查找或生成MediaSource////////////////
 
@@ -283,7 +286,7 @@ private:
     void emitEvent(bool regist);
 
 protected:
-    BytesSpeed _speed;
+    BytesSpeed _speed[TrackMax];
 
 private:
     time_t _create_stamp;
@@ -293,6 +296,8 @@ private:
     string _app;
     string _stream_id;
     std::weak_ptr<MediaSourceEvent> _listener;
+    //对象个数统计
+    ObjectStatistic<MediaSource> _statistic;
 };
 
 ///缓存刷新策略类
@@ -301,18 +306,10 @@ public:
     FlushPolicy() = default;
     ~FlushPolicy() = default;
 
-    uint32_t getStamp(const RtpPacket::Ptr &packet) {
-        return packet->timeStamp;
-    }
-
-    uint32_t getStamp(const RtmpPacket::Ptr &packet) {
-        return packet->time_stamp;
-    }
-
-    bool isFlushAble(bool is_video, bool is_key, uint32_t new_stamp, int cache_size);
+    bool isFlushAble(bool is_video, bool is_key, uint64_t new_stamp, size_t cache_size);
 
 private:
-    uint32_t _last_stamp[2] = {0, 0};
+    uint64_t _last_stamp[2] = {0, 0};
 };
 
 /// 合并写缓存模板
@@ -328,8 +325,8 @@ public:
 
     virtual ~PacketCache() = default;
 
-    void inputPacket(bool is_video, std::shared_ptr<packet> pkt, bool key_pos) {
-        if (_policy.isFlushAble(is_video, key_pos, _policy.getStamp(pkt), _cache->size())) {
+    void inputPacket(uint64_t stamp, bool is_video, std::shared_ptr<packet> pkt, bool key_pos) {
+        if (_policy.isFlushAble(is_video, key_pos, stamp, _cache->size())) {
             flushAll();
         }
 

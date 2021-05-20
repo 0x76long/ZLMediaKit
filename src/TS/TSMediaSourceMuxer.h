@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -31,7 +31,7 @@ public:
     ~TSMediaSourceMuxer() override = default;
 
     void setListener(const std::weak_ptr<MediaSourceEvent> &listener){
-        _listener = listener;
+        setDelegate(listener);
         _media_src->setListener(shared_from_this());
     }
 
@@ -40,30 +40,33 @@ public:
     }
 
     void onReaderChanged(MediaSource &sender, int size) override {
-        _enabled = size;
-        if (!size) {
+        GET_CONFIG(bool, ts_demand, General::kTSDemand);
+        _enabled = ts_demand ? size : true;
+        if (!size && ts_demand) {
             _clear_cache = true;
         }
         MediaSourceEventInterceptor::onReaderChanged(sender, size);
     }
 
     void inputFrame(const Frame::Ptr &frame) override {
-        if (_clear_cache) {
+        GET_CONFIG(bool, ts_demand, General::kTSDemand);
+        if (_clear_cache && ts_demand) {
             _clear_cache = false;
             _media_src->clearCache();
         }
-        if (_enabled) {
+        if (_enabled || !ts_demand) {
             TsMuxer::inputFrame(frame);
         }
     }
 
     bool isEnabled() {
+        GET_CONFIG(bool, ts_demand, General::kTSDemand);
         //缓存尚未清空时，还允许触发inputFrame函数，以便及时清空缓存
-        return _clear_cache ? true : _enabled;
+        return ts_demand ? (_clear_cache ? true : _enabled) : true;
     }
 
 protected:
-    void onTs(const void *data, int len,uint32_t timestamp,bool is_idr_fast_packet) override{
+    void onTs(const void *data, size_t len,uint32_t timestamp,bool is_idr_fast_packet) override{
         if(!data || !len){
             return;
         }
