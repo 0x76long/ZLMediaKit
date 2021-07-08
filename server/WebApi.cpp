@@ -37,6 +37,9 @@
 #if defined(ENABLE_RTPPROXY)
 #include "Rtp/RtpServer.h"
 #endif
+#ifdef ENABLE_WEBRTC
+#include "../webrtc/WebRtcTransport.h"
+#endif
 
 using namespace toolkit;
 using namespace mediakit;
@@ -126,6 +129,26 @@ static HttpApi toApi(const function<void(API_ARGS_JSON)> &cb) {
     });
 }
 
+static HttpApi toApi(const function<void(API_ARGS_STRING_ASYNC)> &cb) {
+    return [cb](const Parser &parser, const HttpSession::HttpResponseInvoker &invoker, SockInfo &sender) {
+        GET_CONFIG(string, charSet, Http::kCharSet);
+        HttpSession::KeyValue headerOut;
+        headerOut["Content-Type"] = string("application/json; charset=") + charSet;
+
+        Json::Value val;
+        val["code"] = API::Success;
+
+        cb(sender, parser.getHeader(), headerOut, parser, val, invoker);
+    };
+}
+
+static HttpApi toApi(const function<void(API_ARGS_STRING)> &cb) {
+    return toApi([cb](API_ARGS_STRING_ASYNC) {
+        cb(API_ARGS_VALUE);
+        invoker(200, headerOut, val.toStyledString());
+    });
+}
+
 void api_regist(const string &api_path, const function<void(API_ARGS_MAP)> &func) {
     s_map_api.emplace(api_path, toApi(func));
 }
@@ -139,6 +162,14 @@ void api_regist(const string &api_path, const function<void(API_ARGS_JSON)> &fun
 }
 
 void api_regist(const string &api_path, const function<void(API_ARGS_JSON_ASYNC)> &func) {
+    s_map_api.emplace(api_path, toApi(func));
+}
+
+void api_regist(const string &api_path, const function<void(API_ARGS_STRING)> &func){
+    s_map_api.emplace(api_path, toApi(func));
+}
+
+void api_regist(const string &api_path, const function<void(API_ARGS_STRING_ASYNC)> &func){
     s_map_api.emplace(api_path, toApi(func));
 }
 
@@ -380,8 +411,15 @@ void installWebApi() {
         int changed = API::Success;
         for (auto &pr : allArgs) {
             if (ini.find(pr.first) == ini.end()) {
+#if 1
                 //没有这个key
                 continue;
+#else
+                // 新增配置选项,为了动态添加多个ffmpeg cmd 模板
+                ini[pr.first] = pr.second;
+                // 防止changed变化
+                continue;
+#endif
             }
             if (ini[pr.first] == pr.second) {
                 continue;
@@ -445,21 +483,9 @@ void installWebApi() {
     api_regist("/index/api/getMediaList",[](API_ARGS_MAP){
         CHECK_SECRET();
         //获取所有MediaSource列表
-        MediaSource::for_each_media([&](const MediaSource::Ptr &media){
-            if (!allArgs["schema"].empty() && allArgs["schema"] != media->getSchema()) {
-                return;
-            }
-            if (!allArgs["vhost"].empty() && allArgs["vhost"] != media->getVhost()) {
-                return;
-            }
-            if (!allArgs["app"].empty() && allArgs["app"] != media->getApp()) {
-                return;
-            }
-            if (!allArgs["stream"].empty() && allArgs["stream"] != media->getId()) {
-                return;
-            }
+        MediaSource::for_each_media([&](const MediaSource::Ptr &media) {
             val["data"].append(makeMediaSourceJson(*media));
-        });
+        }, allArgs["schema"], allArgs["vhost"], allArgs["app"], allArgs["stream"]);
     });
 
     //测试url http://127.0.0.1/index/api/isMediaOnline?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs
@@ -513,22 +539,10 @@ void installWebApi() {
         int count_hit = 0;
         int count_closed = 0;
         list<MediaSource::Ptr> media_list;
-        MediaSource::for_each_media([&](const MediaSource::Ptr &media){
-            if(!allArgs["schema"].empty() && allArgs["schema"] != media->getSchema()){
-                return;
-            }
-            if(!allArgs["vhost"].empty() && allArgs["vhost"] != media->getVhost()){
-                return;
-            }
-            if(!allArgs["app"].empty() && allArgs["app"] != media->getApp()){
-                return;
-            }
-            if(!allArgs["stream"].empty() && allArgs["stream"] != media->getId()){
-                return;
-            }
+        MediaSource::for_each_media([&](const MediaSource::Ptr &media) {
             ++count_hit;
             media_list.emplace_back(media);
-        });
+        }, allArgs["schema"], allArgs["vhost"], allArgs["app"], allArgs["stream"]);
 
         bool force = allArgs["force"].as<bool>();
         for(auto &media : media_list){
@@ -1160,6 +1174,99 @@ void installWebApi() {
         val["data"]["totalMemUsageMB"] = (int)(bytes / 1024 / 1024);
 #endif
     });
+
+#ifdef ENABLE_WEBRTC
+    api_regist("/index/api/webrtc",[](API_ARGS_STRING_ASYNC){
+        CHECK_ARGS("app", "stream");
+
+        auto offer_sdp = allArgs.Content();
+        auto type = allArgs.getUrlArgs()["type"];
+        MediaInfo info(StrPrinter << "rtc://" << headerIn["Host"] << "/" << allArgs.getUrlArgs()["app"] << "/" << allArgs.getUrlArgs()["stream"] << "?" << allArgs.Params());
+
+        //设置返回类型
+        headerOut["Content-Type"] = HttpFileManager::getContentType(".json");
+        //设置跨域
+        headerOut["Access-Control-Allow-Origin"] = "*";
+
+        if (type.empty() || !strcasecmp(type.data(), "play")) {
+            auto session = static_cast<TcpSession*>(&sender);
+            auto session_ptr = session->shared_from_this();
+            Broadcast::AuthInvoker authInvoker = [invoker, offer_sdp, val, info, headerOut, session_ptr](const string &err) mutable {
+                if (!err.empty()) {
+                    val["code"] = API::AuthFailed;
+                    val["msg"] = err;
+                    invoker(200, headerOut, val.toStyledString());
+                    return;
+                }
+
+                //webrtc播放的是rtsp的源
+                info._schema = RTSP_SCHEMA;
+                MediaSource::findAsync(info, session_ptr, [=](const MediaSource::Ptr &src_in) mutable {
+                    auto src = dynamic_pointer_cast<RtspMediaSource>(src_in);
+                    if (!src) {
+                        val["code"] = API::NotFound;
+                        val["msg"] = "stream not found";
+                        invoker(200, headerOut, val.toStyledString());
+                        return;
+                    }
+                    //还原成rtc，目的是为了hook时识别哪种播放协议
+                    info._schema = "rtc";
+                    auto rtc = WebRtcTransportImp::create(EventPollerPool::Instance().getPoller());
+                    rtc->attach(src, info, true);
+                    val["sdp"] = rtc->getAnswerSdp(offer_sdp);
+                    val["type"] = "answer";
+                    invoker(200, headerOut, val.toStyledString());
+                });
+            };
+
+            //广播通用播放url鉴权事件
+            auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPlayed, info, authInvoker, sender);
+            if (!flag) {
+                //该事件无人监听,默认不鉴权
+                authInvoker("");
+            }
+            return;
+        }
+
+        if (!strcasecmp(type.data(), "push")) {
+            Broadcast::PublishAuthInvoker authInvoker = [invoker, offer_sdp, val, info, headerOut](const string &err, bool enableHls, bool enableMP4) mutable {
+                try {
+                    auto src = dynamic_pointer_cast<RtspMediaSource>(MediaSource::find(RTSP_SCHEMA, info._vhost, info._app, info._streamid));
+                    if (src) {
+                        throw std::runtime_error("已经在推流");
+                    }
+                    if (!err.empty()) {
+                        throw runtime_error(StrPrinter << "推流鉴权失败:" << err);
+                    }
+                    auto push_src = std::make_shared<RtspMediaSourceImp>(info._vhost, info._app, info._streamid);
+                    push_src->setProtocolTranslation(enableHls, enableMP4);
+                    auto rtc = WebRtcTransportImp::create(EventPollerPool::Instance().getPoller());
+                    push_src->setListener(rtc);
+                    rtc->attach(push_src, info, false);
+                    val["sdp"] = rtc->getAnswerSdp(offer_sdp);
+                    val["type"] = "answer";
+                    invoker(200, headerOut, val.toStyledString());
+                } catch (std::exception &ex) {
+                    val["code"] = API::Exception;
+                    val["msg"] = ex.what();
+                    invoker(200, headerOut, val.toStyledString());
+                }
+            };
+
+            //rtsp推流需要鉴权
+            auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPublish, info, authInvoker, sender);
+            if (!flag) {
+                //该事件无人监听,默认不鉴权
+                GET_CONFIG(bool, toHls, General::kPublishToHls);
+                GET_CONFIG(bool, toMP4, General::kPublishToMP4);
+                authInvoker("", toHls, toMP4);
+            }
+            return;
+        }
+
+        throw ApiRetException("不支持该类型", API::InvalidArgs);
+    });
+#endif
 
     ////////////以下是注册的Hook API////////////
     api_regist("/index/hook/on_publish",[](API_ARGS_MAP){

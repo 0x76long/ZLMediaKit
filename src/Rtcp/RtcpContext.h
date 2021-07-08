@@ -22,18 +22,18 @@ public:
     using Ptr = std::shared_ptr<RtcpContext>;
     /**
      * 创建rtcp上下文
-     * @param sample_rate 音频采用率，视频一般为90000
      * @param is_receiver 是否为rtp接收者，接收者更消耗性能
      */
-    RtcpContext(uint32_t sample_rate, bool is_receiver);
+    RtcpContext(bool is_receiver);
 
     /**
      * 输出或输入rtp时调用
      * @param seq rtp的seq
-     * @param stamp rtp的时间戳，单位毫秒
+     * @param stamp rtp的时间戳，单位采样数(非毫秒)
+     * @param rtp rtp时间戳采样率，视频一般为90000，音频一般为采样率
      * @param bytes rtp数据长度
      */
-    void onRtp(uint16_t seq, uint32_t stamp, size_t bytes);
+    void onRtp(uint16_t seq, uint32_t stamp, uint32_t sample_rate, size_t bytes);
 
     /**
      * 输入sr rtcp包
@@ -71,6 +71,13 @@ public:
      */
     void clear();
 
+    /**
+     * 获取rtt
+     * @param ssrc rtp ssrc
+     * @return rtt,单位毫秒
+     */
+    uint32_t getRtt(uint32_t ssrc) const;
+
 private:
     /**
      * 上次结果与本次结果间应收包数
@@ -87,8 +94,6 @@ private:
     bool _is_receiver;
     //时间戳抖动值
     double _jitter = 0;
-    //视频默认90000,音频为采样率
-    uint32_t _sample_rate;
     //收到或发送的rtp的字节数
     size_t _bytes = 0;
     //收到或发送的rtp的个数
@@ -115,6 +120,7 @@ private:
     uint32_t _last_sr_lsr = 0;
     //上次收到sr时的系统时间戳,单位毫秒
     uint64_t _last_sr_ntp_sys = 0;
+    unordered_map<uint32_t/*ssrc*/, uint32_t/*rtt*/> _rtt;
 };
 
 }//namespace mediakit
