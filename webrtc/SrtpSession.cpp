@@ -231,7 +231,7 @@ namespace RTC
 		}
 	}
 
-	bool SrtpSession::EncryptRtp(uint8_t* data, size_t* len)
+	bool SrtpSession::EncryptRtp(uint8_t* data, int* len)
 	{
 		MS_TRACE();
 		srtp_err_status_t err =
@@ -239,15 +239,14 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-			MS_WARN_TAG(srtp, "srtp_protect() failed: %s", DepLibSRTP::GetErrorString(err));
-
-			return false;
+            WarnL << "srtp_protect() failed:" << DepLibSRTP::GetErrorString(err);
+            return false;
 		}
 
 		return true;
 	}
 
-	bool SrtpSession::DecryptSrtp(uint8_t* data, size_t* len)
+	bool SrtpSession::DecryptSrtp(uint8_t* data, int* len)
 	{
 		MS_TRACE();
 
@@ -256,15 +255,14 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-			MS_DEBUG_TAG(srtp, "srtp_unprotect() failed: %s", DepLibSRTP::GetErrorString(err));
-
+            WarnL << "srtp_unprotect() failed:" << DepLibSRTP::GetErrorString(err);
 			return false;
 		}
 
 		return true;
 	}
 
-	bool SrtpSession::EncryptRtcp(uint8_t* data, size_t* len)
+	bool SrtpSession::EncryptRtcp(uint8_t* data, int* len)
 	{
 		MS_TRACE();
 		srtp_err_status_t err = srtp_protect_rtcp(
@@ -272,15 +270,14 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-			MS_WARN_TAG(srtp, "srtp_protect_rtcp() failed: %s", DepLibSRTP::GetErrorString(err));
-
+            WarnL << "srtp_protect_rtcp() failed:" << DepLibSRTP::GetErrorString(err);
 			return false;
 		}
 
 		return true;
 	}
 
-	bool SrtpSession::DecryptSrtcp(uint8_t* data, size_t* len)
+	bool SrtpSession::DecryptSrtcp(uint8_t* data, int* len)
 	{
 		MS_TRACE();
 
@@ -289,8 +286,7 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-			MS_DEBUG_TAG(srtp, "srtp_unprotect_rtcp() failed: %s", DepLibSRTP::GetErrorString(err));
-
+            WarnL << "srtp_unprotect_rtcp() failed:" << DepLibSRTP::GetErrorString(err);
 			return false;
 		}
 
