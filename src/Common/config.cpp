@@ -75,6 +75,9 @@ const string kRtmpDemand = GENERAL_FIELD"rtmp_demand";
 const string kTSDemand = GENERAL_FIELD"ts_demand";
 const string kFMP4Demand = GENERAL_FIELD"fmp4_demand";
 const string kEnableAudio = GENERAL_FIELD"enable_audio";
+const string kWaitTrackReadyMS = GENERAL_FIELD"wait_track_ready_ms";
+const string kWaitAddTrackMS = GENERAL_FIELD"wait_add_track_ms";
+const string kUnreadyFrameCache = GENERAL_FIELD"unready_frame_cache";
 
 onceToken token([](){
     mINI::Instance()[kFlowThreshold] = 1024;
@@ -94,7 +97,9 @@ onceToken token([](){
     mINI::Instance()[kTSDemand] = 0;
     mINI::Instance()[kFMP4Demand] = 0;
     mINI::Instance()[kEnableAudio] = 1;
-
+    mINI::Instance()[kWaitTrackReadyMS] = 10000;
+    mINI::Instance()[kWaitAddTrackMS] = 3000;
+    mINI::Instance()[kUnreadyFrameCache] = 100;
 },nullptr);
 
 }//namespace General
@@ -138,7 +143,7 @@ onceToken token([](){
                                                 "<body bgcolor=\"white\">"
                                                 "<center><h1>您访问的资源不存在！</h1></center>"
                                                 "<hr><center>"
-                                             << SERVER_NAME
+                                             << kServerName
                                              << "</center>"
                                                 "</body>"
                                                 "</html>"
@@ -305,23 +310,11 @@ const string kRtspPwdIsMD5 = "rtsp_pwd_md5";
 const string kTimeoutMS = "protocol_timeout_ms";
 const string kMediaTimeoutMS = "media_timeout_ms";
 const string kBeatIntervalMS = "beat_interval_ms";
-const string kMaxAnalysisMS = "max_analysis_ms";
 const string kBenchmarkMode = "benchmark_mode";
-
+const string kWaitTrackReady = "wait_track_ready";
 }
 
 }  // namespace mediakit
-
-extern "C" {
-void Assert_Throw(int failed, const char *exp, const char *func, const char *file, int line) {
-    if (failed) {
-        _StrPrinter printer;
-        printer << "Assertion failed: (" << exp << "), function " << func << ", file " << file << ", line " << line
-                << ".";
-        throw std::runtime_error(printer);
-    }
-}
-}
 
 #ifdef ENABLE_MEM_DEBUG
 

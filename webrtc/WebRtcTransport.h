@@ -35,7 +35,31 @@ extern const string kPort;
 extern const string kTimeOutSec;
 }//namespace RTC
 
-class WebRtcTransport : public RTC::DtlsTransport::Listener, public RTC::IceServer::Listener, public std::enable_shared_from_this<WebRtcTransport> {
+class WebRtcInterface {
+public:
+    WebRtcInterface() = default;
+    virtual ~WebRtcInterface() = default;
+    virtual string getAnswerSdp(const string &offer) = 0;
+    virtual const string &getIdentifier() const = 0;
+};
+
+class WebRtcException : public WebRtcInterface {
+public:
+    WebRtcException(const SockException &ex) : _ex(ex) {};
+    ~WebRtcException() override = default;
+    string getAnswerSdp(const string &offer) override {
+        throw _ex;
+    }
+    const string &getIdentifier() const override {
+        static string s_null;
+        return s_null;
+    }
+
+private:
+    SockException _ex;
+};
+
+class WebRtcTransport : public WebRtcInterface, public RTC::DtlsTransport::Listener, public RTC::IceServer::Listener, public std::enable_shared_from_this<WebRtcTransport> {
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
     WebRtcTransport(const EventPoller::Ptr &poller);
@@ -56,7 +80,12 @@ public:
      * @param offer offer sdp
      * @return answer sdp
      */
-    std::string getAnswerSdp(const string &offer);
+    string getAnswerSdp(const string &offer) override;
+
+    /**
+     * 获取对象唯一id
+     */
+    const string& getIdentifier() const override;
 
     /**
      * socket收到udp数据
@@ -77,7 +106,6 @@ public:
     void sendRtcpPacket(const char *buf, int len, bool flush, void *ctx = nullptr);
 
     const EventPoller::Ptr& getPoller() const;
-    const string& getKey() const;
 
 protected:
     ////  dtls相关的回调 ////
@@ -107,7 +135,7 @@ protected:
     virtual void onStartWebRTC() = 0;
     virtual void onRtcConfigure(RtcConfigure &configure) const;
     virtual void onCheckSdp(SdpType type, RtcSession &sdp) = 0;
-    virtual void onSendSockData(const char *buf, size_t len, struct sockaddr_in *dst, bool flush = true) = 0;
+    virtual void onSendSockData(Buffer::Ptr buf, bool flush = true, RTC::TransportTuple *tuple = nullptr) = 0;
 
     virtual void onRtp(const char *buf, size_t len, uint64_t stamp_ms) = 0;
     virtual void onRtcp(const char *buf, size_t len) = 0;
@@ -116,25 +144,28 @@ protected:
     virtual void onBeforeEncryptRtcp(const char *buf, int &len, void *ctx) = 0;
 
 protected:
-    RtcSession::Ptr _offer_sdp;
-    RtcSession::Ptr _answer_sdp;
     RTC::TransportTuple* getSelectedTuple() const;
     void sendRtcpRemb(uint32_t ssrc, size_t bit_rate);
     void sendRtcpPli(uint32_t ssrc);
 
 private:
-    void onSendSockData(const char *buf, size_t len, bool flush = true);
+    void sendSockData(const char *buf, size_t len, RTC::TransportTuple *tuple);
     void setRemoteDtlsFingerprint(const RtcSession &remote);
 
+protected:
+    RtcSession::Ptr _offer_sdp;
+    RtcSession::Ptr _answer_sdp;
+
 private:
-    uint8_t _srtp_buf[2000];
-    string _key;
+    string _identifier;
     EventPoller::Ptr _poller;
     std::shared_ptr<RTC::IceServer> _ice_server;
     std::shared_ptr<RTC::DtlsTransport> _dtls_transport;
     std::shared_ptr<RTC::SrtpSession> _srtp_session_send;
     std::shared_ptr<RTC::SrtpSession> _srtp_session_recv;
     Ticker _ticker;
+    //循环池
+    ResourcePool<BufferRaw> _packet_pool;
 };
 
 class RtpChannel;
@@ -159,32 +190,50 @@ public:
     std::shared_ptr<RtpChannel> getRtpChannel(uint32_t ssrc) const;
 };
 
-class WebRtcTransportImp : public WebRtcTransport, public MediaSourceEvent{
+struct WrappedMediaTrack {
+    MediaTrack::Ptr track;
+    explicit WrappedMediaTrack(MediaTrack::Ptr ptr): track(ptr) {}
+    virtual ~WrappedMediaTrack() {}
+    virtual void inputRtp(const char *buf, size_t len, uint64_t stamp_ms, RtpHeader *rtp) = 0;
+};
+
+struct WrappedRtxTrack: public WrappedMediaTrack {
+    explicit WrappedRtxTrack(MediaTrack::Ptr ptr)
+        : WrappedMediaTrack(std::move(ptr)) {}
+    void inputRtp(const char *buf, size_t len, uint64_t stamp_ms, RtpHeader *rtp) override;
+};
+
+class WebRtcTransportImp;
+
+struct WrappedRtpTrack : public WrappedMediaTrack {
+    explicit WrappedRtpTrack(MediaTrack::Ptr ptr, TwccContext& twcc, WebRtcTransportImp& t)
+        : WrappedMediaTrack(std::move(ptr))
+        , _twcc_ctx(twcc)
+        , _transport(t) {}
+    TwccContext& _twcc_ctx;
+    WebRtcTransportImp& _transport;
+    void inputRtp(const char *buf, size_t len, uint64_t stamp_ms, RtpHeader *rtp) override;
+};
+
+class WebRtcTransportImp : public WebRtcTransport {
 public:
     using Ptr = std::shared_ptr<WebRtcTransportImp>;
     ~WebRtcTransportImp() override;
 
-    /**
-     * 创建WebRTC对象
-     * @param poller 改对象需要绑定的线程
-     * @return 对象
-     */
-    static Ptr create(const EventPoller::Ptr &poller);
-    static Ptr get(const string &key); // 借用
-    static Ptr move(const string &key); // 所有权转移
-
     void setSession(Session::Ptr session);
+    const Session::Ptr& getSession() const;
+    uint64_t getBytesUsage() const;
+    uint64_t getDuration() const;
+    bool canSendRtp() const;
+    bool canRecvRtp() const;
+    void onSendRtp(const RtpPacket::Ptr &rtp, bool flush, bool rtx = false);
 
-    /**
-     * 绑定rtsp媒体源
-     * @param src 媒体源
-     * @param is_play 是播放还是推流
-     */
-    void attach(const RtspMediaSource::Ptr &src, const MediaInfo &info, bool is_play = true);
+    void createRtpChannel(const string &rid, uint32_t ssrc, MediaTrack &track);
 
 protected:
+    WebRtcTransportImp(const EventPoller::Ptr &poller);
     void onStartWebRTC() override;
-    void onSendSockData(const char *buf, size_t len, struct sockaddr_in *dst, bool flush = true) override;
+    void onSendSockData(Buffer::Ptr buf, bool flush = true, RTC::TransportTuple *tuple = nullptr) override;
     void onCheckSdp(SdpType type, RtcSession &sdp) override;
     void onRtcConfigure(RtcConfigure &configure) const override;
 
@@ -192,48 +241,29 @@ protected:
     void onRtcp(const char *buf, size_t len) override;
     void onBeforeEncryptRtp(const char *buf, int &len, void *ctx) override;
     void onBeforeEncryptRtcp(const char *buf, int &len, void *ctx) override {};
-
-    void onShutdown(const SockException &ex) override;
-
-    ///////MediaSourceEvent override///////
-    // 关闭
-    bool close(MediaSource &sender, bool force) override;
-    // 播放总人数
-    int totalReaderCount(MediaSource &sender) override;
-    // 获取媒体源类型
-    MediaOriginType getOriginType(MediaSource &sender) const override;
-    // 获取媒体源url或者文件路径
-    string getOriginUrl(MediaSource &sender) const override;
-    // 获取媒体源客户端相关信息
-    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
-
-private:
-    WebRtcTransportImp(const EventPoller::Ptr &poller);
     void onCreate() override;
     void onDestory() override;
-    void onSendRtp(const RtpPacket::Ptr &rtp, bool flush, bool rtx = false);
-    SdpAttrCandidate::Ptr getIceCandidate() const;
-    bool canSendRtp() const;
-    bool canRecvRtp() const;
+    void onShutdown(const SockException &ex) override;
+    virtual void onRecvRtp(MediaTrack &track, const string &rid, RtpPacket::Ptr rtp) = 0;
+    void updateTicker();
 
+private:
+    SdpAttrCandidate::Ptr getIceCandidate() const;
     void onSortedRtp(MediaTrack &track, const string &rid, RtpPacket::Ptr rtp);
     void onSendNack(MediaTrack &track, const FCI_NACK &nack, uint32_t ssrc);
     void onSendTwcc(uint32_t ssrc, const string &twcc_fci);
-    void createRtpChannel(const string &rid, uint32_t ssrc, MediaTrack &track);
+
     void registerSelf();
     void unregisterSelf();
     void unrefSelf();
     void onCheckAnswer(RtcSession &sdp);
 
 private:
-    bool _simulcast = false;
     uint16_t _rtx_seq[2] = {0, 0};
     //用掉的总流量
     uint64_t _bytes_usage = 0;
     //保持自我强引用
     Ptr _self;
-    //媒体相关元数据
-    MediaInfo _media_info;
     //检测超时的定时器
     Timer::Ptr _timer;
     //刷新计时器
@@ -242,18 +272,54 @@ private:
     Ticker _pli_ticker;
     //udp session
     Session::Ptr _session;
-    //推流的rtsp源
-    RtspMediaSource::Ptr _push_src;
-    unordered_map<string/*rid*/, RtspMediaSource::Ptr> _push_src_simulcast;
-    //播放的rtsp源
-    RtspMediaSource::Ptr _play_src;
-    //播放rtsp源的reader对象
-    RtspMediaSource::RingType::RingReader::Ptr _reader;
+    //twcc rtcp发送上下文对象
+    TwccContext _twcc_ctx;
     //根据发送rtp的track类型获取相关信息
     MediaTrack::Ptr _type_to_track[2];
-    //根据接收rtp的pt获取相关信息
-    unordered_map<uint8_t/*pt*/, std::pair<bool/*is rtx*/,MediaTrack::Ptr> > _pt_to_track;
     //根据rtcp的ssrc获取相关信息，收发rtp和rtx的ssrc都会记录
     unordered_map<uint32_t/*ssrc*/, MediaTrack::Ptr> _ssrc_to_track;
-    TwccContext _twcc_ctx;
+    //根据接收rtp的pt获取相关信息
+    unordered_map<uint8_t/*pt*/, std::unique_ptr<WrappedMediaTrack>> _pt_to_track;
+};
+
+class WebRtcTransportManager {
+public:
+    friend class WebRtcTransportImp;
+    static WebRtcTransportManager &Instance();
+    WebRtcTransportImp::Ptr getItem(const string &key);
+
+private:
+    WebRtcTransportManager() = default;
+    void addItem(const string &key, const WebRtcTransportImp::Ptr &ptr);
+    void removeItem(const string &key);
+
+private:
+    mutable mutex _mtx;
+    unordered_map<string, weak_ptr<WebRtcTransportImp> > _map;
+};
+
+class WebRtcArgs {
+public:
+    WebRtcArgs() = default;
+    virtual ~WebRtcArgs() = default;
+
+    virtual variant operator[](const string &key) const = 0;
+};
+
+class WebRtcPluginManager {
+public:
+    using onCreateRtc = function<void(const WebRtcInterface &rtc)>;
+    using Plugin = function<void(Session &sender, const string &offer, const WebRtcArgs &args, const onCreateRtc &cb)>;
+
+    static WebRtcPluginManager &Instance();
+
+    void registerPlugin(const string &type, Plugin cb);
+    void getAnswerSdp(Session &sender, const string &type, const string &offer, const WebRtcArgs &args, const onCreateRtc &cb);
+
+private:
+    WebRtcPluginManager() = default;
+
+private:
+    mutable mutex _mtx_creator;
+    unordered_map<string, Plugin> _map_creator;
 };
