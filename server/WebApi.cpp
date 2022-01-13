@@ -42,6 +42,12 @@
 #include "../webrtc/WebRtcPusher.h"
 #include "../webrtc/WebRtcEchoTest.h"
 #endif
+#ifdef _WIN32
+#include <io.h>
+#include <iostream>
+#include <tchar.h>
+#endif // _WIN32
+
 
 using namespace toolkit;
 using namespace mediakit;
@@ -206,6 +212,12 @@ static ApiArgsType getAllArgs(const Parser &parser) {
 }
 
 extern uint64_t getTotalMemUsage();
+extern uint64_t getTotalMemBlock();
+extern uint64_t getThisThreadMemUsage();
+extern uint64_t getThisThreadMemBlock();
+extern std::vector<size_t> getBlockTypeSize();
+extern uint64_t getTotalMemBlockByType(int type);
+extern uint64_t getThisThreadMemBlockByType(int type) ;
 
 static inline void addHttpListener(){
     GET_CONFIG(bool, api_debug, API::kApiDebug);
@@ -227,7 +239,7 @@ static inline void addHttpListener(){
                     size = body->remainSize();
                 }
 
-                LogContextCapturer log(getLogger(), LDebug, __FILE__, "http api debug", __LINE__);
+                LogContextCapture log(getLogger(), LDebug, __FILE__, "http api debug", __LINE__);
                 log << "\r\n# request:\r\n" << parser.Method() << " " << parser.FullUrl() << "\r\n";
                 log << "# header:\r\n";
 
@@ -350,8 +362,9 @@ Value makeMediaSourceJson(MediaSource &media){
     return item;
 }
 
-Value getStatisticJson() {
-    Value val(objectValue);
+void getStatisticJson(const function<void(Value &val)> &cb) {
+    auto obj = std::make_shared<Value>(objectValue);
+    auto &val = *obj;
     val["MediaSource"] = (Json::UInt64)(ObjectStatistic<MediaSource>::count());
     val["MultiMediaSourceMuxer"] = (Json::UInt64)(ObjectStatistic<MultiMediaSourceMuxer>::count());
 
@@ -374,11 +387,103 @@ Value getStatisticJson() {
     val["RtmpPacket"] = (Json::UInt64)(ObjectStatistic<RtmpPacket>::count());
 #ifdef ENABLE_MEM_DEBUG
     auto bytes = getTotalMemUsage();
-    val["totalMemUsage"] = (Json::UInt64)bytes;
-    val["totalMemUsageMB"] = (int)(bytes / 1024 / 1024);
+    val["totalMemUsage"] = (Json::UInt64) bytes;
+    val["totalMemUsageMB"] = (int) (bytes / 1024 / 1024);
+    val["totalMemBlock"] = (Json::UInt64) getTotalMemBlock();
+    static auto block_type_size = getBlockTypeSize();
+    {
+        int i = 0;
+        string str;
+        size_t last = 0;
+        for (auto sz : block_type_size) {
+            str.append(to_string(last) + "~" + to_string(sz) + ":" + to_string(getTotalMemBlockByType(i++)) + ";");
+            last = sz;
+        }
+        str.pop_back();
+        val["totalMemBlockTypeCount"] = str;
+    }
+
+    auto thread_size = EventPollerPool::Instance().getExecutorSize() + WorkThreadPool::Instance().getExecutorSize();
+    std::shared_ptr<vector<Value> > thread_mem_info = std::make_shared<vector<Value> >(thread_size);
+
+    shared_ptr<void> finished(nullptr, [thread_mem_info, cb, obj](void *) {
+        for (auto &val : *thread_mem_info) {
+            (*obj)["threadMem"].append(val);
+        }
+        //触发回调
+        cb(*obj);
+    });
+
+    auto pos = 0;
+    auto lam0 = [&](TaskExecutor &executor) {
+        auto &val = (*thread_mem_info)[pos++];
+        executor.async([finished, &val]() {
+            auto bytes = getThisThreadMemUsage();
+            val["threadName"] = getThreadName();
+            val["threadMemUsage"] = (Json::UInt64) bytes;
+            val["threadMemUsageMB"] = (Json::UInt64) (bytes / 1024 / 1024);
+            val["threadMemBlock"] = (Json::UInt64) getThisThreadMemBlock();
+            {
+                int i = 0;
+                string str;
+                size_t last = 0;
+                for (auto sz : block_type_size) {
+                    str.append(to_string(last) + "~" + to_string(sz) + ":" + to_string(getThisThreadMemBlockByType(i++)) + ";");
+                    last = sz;
+                }
+                str.pop_back();
+                val["threadMemBlockTypeCount"] = str;
+            }
+        });
+    };
+    auto lam1 = [lam0](const TaskExecutor::Ptr &executor) {
+        lam0(*executor);
+    };
+    EventPollerPool::Instance().for_each(lam1);
+    WorkThreadPool::Instance().for_each(lam1);
+#else
+    cb(*obj);
 #endif
-    return val;
 }
+
+void addStreamProxy(const string &vhost, const string &app, const string &stream, const string &url, int retry_count,
+                    bool enable_hls, bool enable_mp4, int rtp_type, float timeout_sec,
+                    const function<void(const SockException &ex, const string &key)> &cb) {
+    auto key = getProxyKey(vhost, app, stream);
+    lock_guard<recursive_mutex> lck(s_proxyMapMtx);
+    if (s_proxyMap.find(key) != s_proxyMap.end()) {
+        //已经在拉流了
+        cb(SockException(Err_success), key);
+        return;
+    }
+    //添加拉流代理
+    auto player = std::make_shared<PlayerProxy>(vhost, app, stream, enable_hls, enable_mp4, retry_count ? retry_count : -1);
+    s_proxyMap[key] = player;
+
+    //指定RTP over TCP(播放rtsp时有效)
+    (*player)[kRtpType] = rtp_type;
+
+    if (timeout_sec > 0.1) {
+        //播放握手超时时间
+        (*player)[kTimeoutMS] = timeout_sec * 1000;
+    }
+
+    //开始播放，如果播放失败或者播放中止，将会自动重试若干次，默认一直重试
+    player->setPlayCallbackOnce([cb, key](const SockException &ex) {
+        if (ex) {
+            lock_guard<recursive_mutex> lck(s_proxyMapMtx);
+            s_proxyMap.erase(key);
+        }
+        cb(ex, key);
+    });
+
+    //被主动关闭拉流
+    player->setOnClose([key](const SockException &ex) {
+        lock_guard<recursive_mutex> lck(s_proxyMapMtx);
+        s_proxyMap.erase(key);
+    });
+    player->play(url);
+};
 
 /**
  * 安装api接口
@@ -507,6 +612,59 @@ void installWebApi() {
             return 0;
         });
         val["msg"] = "服务器将在一秒后自动重启";
+    });
+#else
+    //增加Windows下的重启代码
+    api_regist("/index/api/restartServer", [](API_ARGS_MAP) {
+        CHECK_SECRET();
+        //创建重启批处理脚本文件
+        FILE *pf;
+        errno_t err = ::_wfopen_s(&pf, L"RestartServer.cmd", L"w"); //“w”如果该文件存在，其内容将被覆盖
+        if (err == 0) {
+            char szExeName[1024];
+            char drive[_MAX_DRIVE] = { 0 };
+            char dir[_MAX_DIR] = { 0 };
+            char fname[_MAX_FNAME] = { 0 };
+            char ext[_MAX_EXT] = { 0 };
+            char exeName[_MAX_FNAME] = { 0 };
+            GetModuleFileNameA(NULL, szExeName, 1024); //获取进程的全路径
+            _splitpath(szExeName, drive, dir, fname, ext);
+            strcpy(exeName, fname);
+            strcat(exeName, ext);
+            fprintf(pf, "@echo off\ntaskkill /f /im %s\nstart \"\" \"%s\"\ndel %%0", exeName, szExeName);
+            fclose(pf);
+            // 1秒后执行创建的批处理脚本
+            EventPollerPool::Instance().getPoller()->doDelayTask(1000, []() {
+                STARTUPINFO si;
+                PROCESS_INFORMATION pi;
+                ZeroMemory(&si, sizeof si);
+                ZeroMemory(&pi, sizeof pi);
+                si.cb = sizeof si;
+                si.dwFlags = STARTF_USESHOWWINDOW;
+                si.wShowWindow = SW_HIDE;
+                TCHAR winSysDir[1024];
+                ZeroMemory(winSysDir, sizeof winSysDir);
+                GetSystemDirectory(winSysDir, 1024);
+                TCHAR appName[1024];
+                ZeroMemory(appName, sizeof appName);
+
+                _stprintf(appName, "%s\\cmd.exe", winSysDir);
+                BOOL bRet = CreateProcess(appName, " /c RestartServer.cmd", NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+
+                if (bRet == FALSE) {
+                    int err = GetLastError();
+                    cout << endl << "无法执行重启操作，错误代码：" << err << endl;
+                }
+                WaitForSingleObject(pi.hProcess, INFINITE);
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                return 0;
+            });
+            val["msg"] = "服务器将在一秒后自动重启";
+        } else {
+            val["msg"] = "创建重启脚本文件失败";
+            val["code"] = API::OtherFailed;
+        }
     });
 #endif//#if !defined(_WIN32)
 
@@ -741,52 +899,6 @@ void installWebApi() {
         lock_guard<recursive_mutex> lck(s_proxyPusherMapMtx);
         val["data"]["flag"] = s_proxyPusherMap.erase(allArgs["key"]) == 1;
     });
-
-    static auto addStreamProxy = [](const string &vhost,
-                                    const string &app,
-                                    const string &stream,
-                                    const string &url,
-                                    int retry_count,
-                                    bool enable_hls,
-                                    bool enable_mp4,
-                                    int rtp_type,
-                                    float timeout_sec,
-                                    const function<void(const SockException &ex,const string &key)> &cb){
-        auto key = getProxyKey(vhost,app,stream);
-        lock_guard<recursive_mutex> lck(s_proxyMapMtx);
-        if(s_proxyMap.find(key) != s_proxyMap.end()){
-            //已经在拉流了
-            cb(SockException(Err_success),key);
-            return;
-        }
-        //添加拉流代理
-        PlayerProxy::Ptr player(new PlayerProxy(vhost, app, stream, enable_hls, enable_mp4, retry_count ? retry_count : -1));
-        s_proxyMap[key] = player;
-
-        //指定RTP over TCP(播放rtsp时有效)
-        (*player)[kRtpType] = rtp_type;
-
-        if (timeout_sec > 0.1) {
-            //播放握手超时时间
-            (*player)[kTimeoutMS] = timeout_sec * 1000;
-        }
-
-        //开始播放，如果播放失败或者播放中止，将会自动重试若干次，默认一直重试
-        player->setPlayCallbackOnce([cb,key](const SockException &ex){
-            if(ex){
-                lock_guard<recursive_mutex> lck(s_proxyMapMtx);
-                s_proxyMap.erase(key);
-            }
-            cb(ex,key);
-        });
-
-        //被主动关闭拉流
-        player->setOnClose([key](const SockException &ex){
-            lock_guard<recursive_mutex> lck(s_proxyMapMtx);
-            s_proxyMap.erase(key);
-        });
-        player->play(url);
-    };
 
     //动态添加rtsp/rtmp拉流代理
     //测试url http://127.0.0.1/index/api/addStreamProxy?vhost=__defaultVhost__&app=proxy&enable_rtsp=1&enable_rtmp=1&stream=0&url=rtmp://127.0.0.1/live/obs
@@ -1219,9 +1331,12 @@ void installWebApi() {
         });
     });
 
-    api_regist("/index/api/getStatistic",[](API_ARGS_MAP){
+    api_regist("/index/api/getStatistic",[](API_ARGS_MAP_ASYNC){
         CHECK_SECRET();
-        val["data"] = getStatisticJson();
+        getStatisticJson([headerOut, val, invoker](const Value &data) mutable{
+            val["data"] = data;
+            invoker(200, headerOut, val.toStyledString());
+        });
     });
 
 #ifdef ENABLE_WEBRTC

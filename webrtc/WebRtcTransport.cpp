@@ -47,7 +47,7 @@ static atomic<uint64_t> s_key{0};
 
 WebRtcTransport::WebRtcTransport(const EventPoller::Ptr &poller) {
     _poller = poller;
-    _identifier = "zlm_"+to_string(++s_key);
+    _identifier = "zlm_" + to_string(++s_key);
     _packet_pool.setSize(64);
 }
 
@@ -136,7 +136,7 @@ void WebRtcTransport::OnDtlsTransportApplicationDataReceived(const RTC::DtlsTran
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void WebRtcTransport::sendSockData(const char *buf, size_t len, RTC::TransportTuple *tuple){
-    auto pkt = _packet_pool.obtain();
+    auto pkt = _packet_pool.obtain2();
     pkt->assign(buf, len);
     onSendSockData(std::move(pkt), true, tuple ? tuple : _ice_server->GetSelectedTuple());
 }
@@ -269,7 +269,7 @@ void WebRtcTransport::inputSockData(char *buf, int len, RTC::TransportTuple *tup
 
 void WebRtcTransport::sendRtpPacket(const char *buf, int len, bool flush, void *ctx) {
     if (_srtp_session_send) {
-        auto pkt = _packet_pool.obtain();
+        auto pkt = _packet_pool.obtain2();
         //预留rtx加入的两个字节
         pkt->setCapacity((size_t) len + SRTP_MAX_TRAILER_LEN + 2);
         pkt->assign(buf, len);
@@ -283,7 +283,7 @@ void WebRtcTransport::sendRtpPacket(const char *buf, int len, bool flush, void *
 
 void WebRtcTransport::sendRtcpPacket(const char *buf, int len, bool flush, void *ctx) {
     if (_srtp_session_send) {
-        auto pkt = _packet_pool.obtain();
+        auto pkt = _packet_pool.obtain2();
         //预留rtx加入的两个字节
         pkt->setCapacity((size_t) len + SRTP_MAX_TRAILER_LEN + 2);
         pkt->assign(buf, len);
@@ -333,13 +333,13 @@ void WebRtcTransportImp::onDestory() {
 }
 
 void WebRtcTransportImp::onSendSockData(Buffer::Ptr buf, bool flush, RTC::TransportTuple *tuple) {
-    if (!_session) {
+    if (!_selected_session) {
         WarnL << "send data failed:" << buf->size();
         return;
     }
     //一次性发送一帧的rtp数据，提高网络io性能
-    _session->setSendFlushFlag(flush);
-    _session->send(std::move(buf));
+    _selected_session->setSendFlushFlag(flush);
+    _selected_session->send(std::move(buf));
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -843,7 +843,9 @@ void WebRtcTransportImp::onBeforeEncryptRtp(const char *buf, int &len, void *ctx
 
         auto origin_seq = ntohs(header->seq);
         //seq跟原来的不一样
-        header->seq = htons(_rtx_seq[pr->second->media->type]++);
+        header->seq = htons(_rtx_seq[pr->second->media->type]);
+        ++_rtx_seq[pr->second->media->type];
+
         auto payload = header->getPayloadData();
         auto payload_size = header->getPayloadSize(len);
         if (payload_size) {
@@ -860,18 +862,22 @@ void WebRtcTransportImp::onBeforeEncryptRtp(const char *buf, int &len, void *ctx
 void WebRtcTransportImp::onShutdown(const SockException &ex){
     WarnL << ex.what();
     unrefSelf();
-    if (_session) {
-        _session->shutdown(ex);
+    for (auto &pr : _history_sessions) {
+        auto session = pr.second.lock();
+        if (session) {
+            session->shutdown(ex);
+        }
     }
 }
 
 void WebRtcTransportImp::setSession(Session::Ptr session) {
-    _session = std::move(session);
+    _history_sessions.emplace(session.get(), session);
+    _selected_session = std::move(session);
     unrefSelf();
 }
 
 const Session::Ptr &WebRtcTransportImp::getSession() const {
-    return _session;
+    return _selected_session;
 }
 
 uint64_t WebRtcTransportImp::getBytesUsage() const{
@@ -963,15 +969,41 @@ void push_plugin(Session &sender, const string &offer_sdp, const WebRtcArgs &arg
             cb(WebRtcException(SockException(Err_other, err)));
             return;
         }
-        auto src = dynamic_pointer_cast<RtspMediaSource>(MediaSource::find(RTSP_SCHEMA, info._vhost, info._app, info._streamid));
-        if (src) {
+
+        RtspMediaSourceImp::Ptr push_src;
+        std::shared_ptr<void> push_src_ownership;
+        auto src = MediaSource::find(RTSP_SCHEMA, info._vhost, info._app, info._streamid);
+        auto push_failed = (bool)src;
+
+        while (src) {
+            //尝试断连后继续推流
+            auto rtsp_src = dynamic_pointer_cast<RtspMediaSourceImp>(src);
+            if (!rtsp_src) {
+                //源不是rtsp推流产生的
+                break;
+            }
+            auto ownership = rtsp_src->getOwnership();
+            if (!ownership) {
+                //获取推流源所有权失败
+                break;
+            }
+            push_src = std::move(rtsp_src);
+            push_src_ownership = std::move(ownership);
+            push_failed = false;
+            break;
+        }
+
+        if (push_failed) {
             cb(WebRtcException(SockException(Err_other, "already publishing")));
             return;
         }
 
-        auto push_src = std::make_shared<RtspMediaSourceImp>(info._vhost, info._app, info._streamid);
-        push_src->setProtocolTranslation(enable_hls, enable_mp4);
-        auto rtc = WebRtcPusher::create(EventPollerPool::Instance().getPoller(), push_src, info);
+        if (!push_src) {
+            push_src = std::make_shared<RtspMediaSourceImp>(info._vhost, info._app, info._streamid);
+            push_src_ownership = push_src->getOwnership();
+            push_src->setProtocolTranslation(enable_hls, enable_mp4);
+        }
+        auto rtc = WebRtcPusher::create(EventPollerPool::Instance().getPoller(), push_src, push_src_ownership, info);
         push_src->setListener(rtc);
         cb(*rtc);
     };

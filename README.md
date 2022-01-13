@@ -112,10 +112,13 @@
   - 支持虚拟主机,可以隔离不同域名
   - 支持按需拉流，无人观看自动关断拉流
   - 支持先拉流后推流，提高及时推流画面打开率
+  - 支持先播放后推流
+  - 支持推流异常断开重连续推播放器不断开
   - 提供c api sdk
   - 支持FFmpeg拉流代理任意格式的流
   - 支持http api生成并返回实时截图
   - 支持按需解复用、转协议，当有人观看时才开启转协议
+  - 支持溯源模式的集群部署，溯源方式支持rtsp/rtmp/hls/http-ts, 边沿站支持hls, 源站支持多个(采用round robin方式溯源)
   
 
 ## 编译以及测试
@@ -247,6 +250,11 @@ bash build_docker_images.sh
 [Xinghua Zhao](holychaossword@hotmail.com)
 [hejilin](https://github.com/brokensword2018)
 [rqb500](https://github.com/rqb500)
+[Alex](https://github.com/alexliyu7352)
+[Dw9](https://github.com/Dw9)
+[明月惊鹊](mingyuejingque@gmail.com)
+[cgm](2958580318@qq.com)
+[hejilin](1724010622@qq.com)
 
 ## 使用案例
 

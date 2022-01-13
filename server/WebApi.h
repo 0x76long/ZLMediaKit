@@ -235,5 +235,8 @@ bool checkArgs(Args &args, const First &first, const KeyTypes &...keys) {
 void installWebApi();
 void unInstallWebApi();
 Value makeMediaSourceJson(MediaSource &media);
-Value getStatisticJson();
+void getStatisticJson(const function<void(Value &val)> &cb);
+void addStreamProxy(const string &vhost, const string &app, const string &stream, const string &url, int retry_count,
+                    bool enable_hls, bool enable_mp4, int rtp_type, float timeout_sec,
+                    const function<void(const SockException &ex, const string &key)> &cb);
 #endif //ZLMEDIAKIT_WEBAPI_H
