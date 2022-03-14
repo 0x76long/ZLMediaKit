@@ -17,9 +17,6 @@
 #include "Extension/Frame.h"
 #include "Extension/Track.h"
 
-using namespace std;
-using namespace toolkit;
-
 namespace mediakit{
 
 class TrackListener {
@@ -106,19 +103,22 @@ public:
      * 获取所有Track
      * @param trackReady 是否获取已经准备好的Track
      */
-    vector<Track::Ptr> getTracks(bool trackReady = true) const override;
-    
+    std::vector<Track::Ptr> getTracks(bool trackReady = true) const override;
+
     /**
      * 返回是否所有track已经准备完成
      */
-    bool isAllTrackReady() const {
-        return _all_track_ready;
-    }
-    
+    bool isAllTrackReady() const;
+
     /**
-     * 添加aac静音轨道
+     * 设置是否开启音频
      */
-    bool addMuteAudioTrack();
+    void enableAudio(bool flag);
+
+    /**
+     * 设置是否开启添加静音音频
+     */
+    void enableMuteAudio(bool flag);
 
 protected:
     /**
@@ -150,14 +150,20 @@ private:
      */
     void checkTrackIfReady();
     void onAllTrackReady_l();
+    /**
+     * 添加aac静音轨道
+     */
+    bool addMuteAudioTrack();
 
 private:
+    bool _enable_audio = true;
+    bool _add_mute_audio = true;
     bool _all_track_ready = false;
     size_t _max_track_size = 2;
-    unordered_map<int, pair<Track::Ptr, bool/*got frame*/> > _track_map;
-    unordered_map<int, List<Frame::Ptr> > _frame_unread;
-    unordered_map<int, function<void()> > _track_ready_callback;
-    Ticker _ticker;
+    std::unordered_map<int, std::pair<Track::Ptr, bool/*got frame*/> > _track_map;
+    std::unordered_map<int, toolkit::List<Frame::Ptr> > _frame_unread;
+    std::unordered_map<int, std::function<void()> > _track_ready_callback;
+    toolkit::Ticker _ticker;
     MuteAudioMaker::Ptr _mute_audio_maker;
 };
 

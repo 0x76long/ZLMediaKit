@@ -28,8 +28,9 @@
 #include "Poller/EventPoller.h"
 #include "Process.h"
 using namespace toolkit;
+using namespace std;
 
-void Process::run(const string &cmd, const string &log_file_tmp) {
+void Process::run(const string &cmd, string &log_file_tmp) {
     kill(2000);
 #ifdef _WIN32
     STARTUPINFO si = {0};
@@ -41,6 +42,7 @@ void Process::run(const string &cmd, const string &log_file_tmp) {
     } else {
         log_file = StrPrinter << log_file_tmp << "." << getCurrentMillisecond();
     }
+    log_file_tmp = log_file;
 
     //重定向shell日志至文件
     auto fp = File::create_file(log_file.data(), "ab");
@@ -91,6 +93,8 @@ void Process::run(const string &cmd, const string &log_file_tmp) {
         //在启动子进程时，暂时禁用SIGINT、SIGTERM信号
         signal(SIGINT, SIG_IGN);
         signal(SIGTERM, SIG_IGN);
+        signal(SIGSEGV, SIG_IGN);
+        signal(SIGABRT, SIG_IGN);
 
         //重定向shell日志至文件
         auto fp = File::create_file(log_file.data(), "ab");
@@ -147,6 +151,7 @@ void Process::run(const string &cmd, const string &log_file_tmp) {
     } else {
         log_file = StrPrinter << log_file_tmp << "." << _pid;
     }
+    log_file_tmp = log_file;
     InfoL << "start child process " << _pid << ", log file:" << log_file;
 #endif // _WIN32
 }

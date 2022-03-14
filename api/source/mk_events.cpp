@@ -14,6 +14,8 @@
 #include "Http/HttpSession.h"
 #include "Rtsp/RtspSession.h"
 #include "Record/MP4Recorder.h"
+
+using namespace toolkit;
 using namespace mediakit;
 
 static void* s_tag;
@@ -102,9 +104,7 @@ API_EXPORT void API_CALL mk_events_listen(const mk_events *events){
                                              (mk_publish_auth_invoker) &invoker,
                                              (mk_sock_info) &sender);
             } else {
-                GET_CONFIG(bool, toHls, General::kPublishToHls);
-                GET_CONFIG(bool, toMP4, General::kPublishToMP4);
-                invoker("", toHls, toMP4);
+                invoker("", ProtocolOption());
             }
         });
 

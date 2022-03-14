@@ -48,7 +48,8 @@
 #include <tchar.h>
 #endif // _WIN32
 
-
+using namespace std;
+using namespace Json;
 using namespace toolkit;
 using namespace mediakit;
 
@@ -447,7 +448,7 @@ void getStatisticJson(const function<void(Value &val)> &cb) {
 }
 
 void addStreamProxy(const string &vhost, const string &app, const string &stream, const string &url, int retry_count,
-                    bool enable_hls, bool enable_mp4, int rtp_type, float timeout_sec,
+                    const ProtocolOption &option, int rtp_type, float timeout_sec,
                     const function<void(const SockException &ex, const string &key)> &cb) {
     auto key = getProxyKey(vhost, app, stream);
     lock_guard<recursive_mutex> lck(s_proxyMapMtx);
@@ -457,15 +458,15 @@ void addStreamProxy(const string &vhost, const string &app, const string &stream
         return;
     }
     //添加拉流代理
-    auto player = std::make_shared<PlayerProxy>(vhost, app, stream, enable_hls, enable_mp4, retry_count ? retry_count : -1);
+    auto player = std::make_shared<PlayerProxy>(vhost, app, stream, option, retry_count ? retry_count : -1);
     s_proxyMap[key] = player;
 
     //指定RTP over TCP(播放rtsp时有效)
-    (*player)[kRtpType] = rtp_type;
+    (*player)[Client::kRtpType] = rtp_type;
 
     if (timeout_sec > 0.1) {
         //播放握手超时时间
-        (*player)[kTimeoutMS] = timeout_sec * 1000;
+        (*player)[Client::kTimeoutMS] = timeout_sec * 1000;
     }
 
     //开始播放，如果播放失败或者播放中止，将会自动重试若干次，默认一直重试
@@ -484,6 +485,14 @@ void addStreamProxy(const string &vhost, const string &app, const string &stream
     });
     player->play(url);
 };
+
+template <typename Type>
+static void getArgsValue(const HttpAllArgs<ApiArgsType> &allArgs, const string &key, Type &value) {
+    auto val = allArgs[key];
+    if (!val.empty()) {
+        value = (Type)val;
+    }
+}
 
 /**
  * 安装api接口
@@ -839,11 +848,11 @@ void installWebApi() {
         s_proxyPusherMap[key] = pusher;
 
         //指定RTP over TCP(播放rtsp时有效)
-        (*pusher)[kRtpType] = rtp_type;
+        (*pusher)[Client::kRtpType] = rtp_type;
 
         if (timeout_sec > 0.1) {
             //推流握手超时时间
-            (*pusher)[kTimeoutMS] = timeout_sec * 1000;
+            (*pusher)[Client::kTimeoutMS] = timeout_sec * 1000;
         }
 
         //开始推流，如果推流失败或者推流中止，将会自动重试若干次，默认一直重试
@@ -905,13 +914,26 @@ void installWebApi() {
     api_regist("/index/api/addStreamProxy",[](API_ARGS_MAP_ASYNC){
         CHECK_SECRET();
         CHECK_ARGS("vhost","app","stream","url");
+
+        ProtocolOption option;
+        getArgsValue(allArgs, "enable_hls", option.enable_hls);
+        getArgsValue(allArgs, "enable_mp4", option.enable_mp4);
+        getArgsValue(allArgs, "enable_rtsp", option.enable_rtsp);
+        getArgsValue(allArgs, "enable_rtmp", option.enable_rtmp);
+        getArgsValue(allArgs, "enable_ts", option.enable_ts);
+        getArgsValue(allArgs, "enable_fmp4", option.enable_fmp4);
+        getArgsValue(allArgs, "enable_audio", option.enable_audio);
+        getArgsValue(allArgs, "add_mute_audio", option.add_mute_audio);
+        getArgsValue(allArgs, "mp4_save_path", option.mp4_save_path);
+        getArgsValue(allArgs, "mp4_max_second", option.mp4_max_second);
+        getArgsValue(allArgs, "hls_save_path", option.hls_save_path);
+
         addStreamProxy(allArgs["vhost"],
                        allArgs["app"],
                        allArgs["stream"],
                        allArgs["url"],
                        allArgs["retry_count"],
-                       allArgs["enable_hls"],/* 是否hls转发 */
-                       allArgs["enable_mp4"],/* 是否MP4录制 */
+                       option,
                        allArgs["rtp_type"],
                        allArgs["timeout_sec"],
                        [invoker,val,headerOut](const SockException &ex,const string &key) mutable{
@@ -1025,17 +1047,16 @@ void installWebApi() {
     api_regist("/index/api/openRtpServer",[](API_ARGS_MAP){
         CHECK_SECRET();
         CHECK_ARGS("port", "enable_tcp", "stream_id");
-
         auto stream_id = allArgs["stream_id"];
 
         lock_guard<recursive_mutex> lck(s_rtpServerMapMtx);
-        if(s_rtpServerMap.find(stream_id) != s_rtpServerMap.end()) {
+        if (s_rtpServerMap.find(stream_id) != s_rtpServerMap.end()) {
             //为了防止RtpProcess所有权限混乱的问题，不允许重复添加相同的stream_id
             throw InvalidArgsException("该stream_id已存在");
         }
 
         RtpServer::Ptr server = std::make_shared<RtpServer>();
-        server->start(allArgs["port"], stream_id, allArgs["enable_tcp"].as<bool>());
+        server->start(allArgs["port"], stream_id, allArgs["enable_tcp"].as<bool>(), "0.0.0.0", false);
         server->setOnDetach([stream_id]() {
             //设置rtp超时移除事件
             lock_guard<recursive_mutex> lck(s_rtpServerMapMtx);
@@ -1251,15 +1272,23 @@ void installWebApi() {
 
     static auto responseSnap = [](const string &snap_path,
                                   const HttpSession::KeyValue &headerIn,
-                                  const HttpSession::HttpResponseInvoker &invoker) {
+                                  const HttpSession::HttpResponseInvoker &invoker,
+                                  const string &err_msg = "") {
+        static bool s_snap_success_once = false;
         StrCaseMap headerOut;
-        struct stat statbuf = {0};
         GET_CONFIG(string, defaultSnap, API::kDefaultSnap);
-        if (!(stat(snap_path.data(), &statbuf) == 0 && statbuf.st_size != 0) && !defaultSnap.empty()) {
-            //空文件且设置了预设图，则返回预设图片(也就是FFmpeg生成截图中空档期的默认图片)
-            const_cast<string&>(snap_path) = File::absolutePath(defaultSnap, "");
+        if (!File::fileSize(snap_path.data())) {
+            if (!err_msg.empty() && (!s_snap_success_once || defaultSnap.empty())) {
+                //重来没截图成功过或者默认截图图片为空，那么直接返回FFmpeg错误日志
+                headerOut["Content-Type"] = HttpFileManager::getContentType(".txt");
+                invoker.responseFile(headerIn, headerOut, err_msg, false, false);
+                return;
+            }
+            //截图成功过一次，那么认为配置无错误，截图失败时，返回预设默认图片
+            const_cast<string &>(snap_path) = File::absolutePath("", defaultSnap);
             headerOut["Content-Type"] = HttpFileManager::getContentType(snap_path.data());
         } else {
+            s_snap_success_once = true;
             //之前生成的截图文件，我们默认为jpeg格式
             headerOut["Content-Type"] = HttpFileManager::getContentType(".jpeg");
         }
@@ -1318,7 +1347,7 @@ void installWebApi() {
 
         //启动FFmpeg进程，开始截图，生成临时文件，截图成功后替换为正式文件
         auto new_snap_tmp = new_snap + ".tmp";
-        FFmpegSnap::makeSnap(allArgs["url"], new_snap_tmp, allArgs["timeout_sec"], [invoker, allArgs, new_snap, new_snap_tmp](bool success) {
+        FFmpegSnap::makeSnap(allArgs["url"], new_snap_tmp, allArgs["timeout_sec"], [invoker, allArgs, new_snap, new_snap_tmp](bool success, const string &err_msg) {
             if (!success) {
                 //生成截图失败，可能残留空文件
                 File::delete_file(new_snap_tmp.data());
@@ -1327,7 +1356,7 @@ void installWebApi() {
                 File::delete_file(new_snap.data());
                 rename(new_snap_tmp.data(), new_snap.data());
             }
-            responseSnap(new_snap, allArgs.getParser().getHeader(), invoker);
+            responseSnap(new_snap, allArgs.getParser().getHeader(), invoker, err_msg);
         });
     });
 
@@ -1465,7 +1494,12 @@ void installWebApi() {
     api_regist("/index/hook/on_stream_not_found",[](API_ARGS_MAP_ASYNC){
         //媒体未找到事件,我们都及时拉流hks作为替代品，目的是为了测试按需拉流
         CHECK_SECRET();
-        CHECK_ARGS("vhost","app","stream");
+        CHECK_ARGS("vhost","app","stream", "schema");
+
+        ProtocolOption option;
+        option.enable_hls = allArgs["schema"] == HLS_SCHEMA;
+        option.enable_mp4 = false;
+
         //通过内置支持的rtsp/rtmp按需拉流
         addStreamProxy(allArgs["vhost"],
                        allArgs["app"],
@@ -1473,8 +1507,7 @@ void installWebApi() {
                        /** 支持rtsp和rtmp方式拉流 ，rtsp支持h265/h264/aac,rtmp仅支持h264/aac **/
                        "rtsp://184.72.239.149/vod/mp4:BigBuckBunny_115k.mov",
                        -1,/*无限重试*/
-                       true,/* 开启hls转发 */
-                       false,/* 禁用MP4录制 */
+                       option,
                        0,//rtp over tcp方式拉流
                        10,//10秒超时
                        [invoker,val,headerOut](const SockException &ex,const string &key) mutable{

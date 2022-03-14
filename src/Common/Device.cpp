@@ -24,14 +24,9 @@
 #include "Codec/H264Encoder.h"
 #endif //ENABLE_X264
 using namespace toolkit;
+using namespace std;
 
 namespace mediakit {
-
-DevChannel::DevChannel(const string &vhost, const string &app, const string &stream_id,
-                       float duration, bool enable_hls, bool enable_mp4) :
-        MultiMediaSourceMuxer(vhost, app, stream_id, duration, true, true, enable_hls, enable_mp4) {}
-
-DevChannel::~DevChannel() {}
 
 bool DevChannel::inputYUV(char* apcYuv[3], int aiYuvLen[3], uint32_t uiStamp) {
 #ifdef ENABLE_X264

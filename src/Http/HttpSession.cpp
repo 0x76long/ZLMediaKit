@@ -17,6 +17,8 @@
 #include "HttpConst.h"
 #include "Util/base64.h"
 #include "Util/SHA1.h"
+
+using namespace std;
 using namespace toolkit;
 
 namespace mediakit {
@@ -176,16 +178,29 @@ bool HttpSession::checkWebSocket(){
 }
 
 bool HttpSession::checkLiveStream(const string &schema, const string  &url_suffix, const function<void(const MediaSource::Ptr &src)> &cb){
-    auto pos = strcasestr(_parser.Url().data(), url_suffix.data());
-    if (!pos || pos + url_suffix.size() != 1 + &_parser.Url().back()) {
-        //未找到后缀
-        return false;
+    std::string url = _parser.Url();
+    auto it = _parser.getUrlArgs().find("schema");
+    if (it != _parser.getUrlArgs().end()) {
+        if (strcasecmp(it->second.c_str(), schema.c_str())) {
+            // unsupported schema
+            return false;
+        }
+    } else {
+        int prefix_size = url_suffix.size();
+        if (url.size() < prefix_size || strcasecmp(url.data() + (url.size() - prefix_size), url_suffix.data())) {
+            //未找到后缀
+            return false;
+        }
+        // url去除特殊后缀
+        url.resize(url.size() - prefix_size);
     }
 
-    //url去除特殊后缀
-    auto url = _parser.Url().substr(0, _parser.Url().size() - url_suffix.size());
     //带参数的url
-    url = _parser.Params().empty() ? url : (url + "?" + _parser.Params());
+    if (!_parser.Params().empty()) {
+        url += "?";
+        url += _parser.Params();
+    }
+
     //解析带上协议+参数完整的url
     _mediaInfo.parse(schema + "://" + _parser["Host"] + url);
 
@@ -221,22 +236,18 @@ bool HttpSession::checkLiveStream(const string &schema, const string  &url_suffi
             if (!src) {
                 //未找到该流
                 strong_self->sendNotFound(close_flag);
-                return;
+            } else {
+                strong_self->_is_live_stream = true;
+                //触发回调
+                cb(src);
             }
-            strong_self->_is_live_stream = true;
-            //触发回调
-            cb(src);
         });
     };
 
     Broadcast::AuthInvoker invoker = [weak_self, onRes](const string &err) {
-        auto strongSelf = weak_self.lock();
-        if (!strongSelf) {
-            return;
+        if (auto strongSelf = weak_self.lock()) {
+            strongSelf->async([onRes, err]() { onRes(err); });
         }
-        strongSelf->async([onRes, err]() {
-            onRes(err);
-        });
     };
 
     auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPlayed, _mediaInfo, invoker, static_cast<SockInfo &>(*this));
@@ -330,10 +341,10 @@ bool HttpSession::checkLiveStreamTS(const function<void()> &cb){
     });
 }
 
-//http-flv 链接格式:http://vhost-url:port/app/streamid.flv?key1=value1&key2=value2
+//http-flv 链接格式:http://vhost-url:port/app/streamid.live.flv?key1=value1&key2=value2
 bool HttpSession::checkLiveStreamFlv(const function<void()> &cb){
     auto start_pts = atoll(_parser.getUrlArgs()["starPts"].data());
-    return checkLiveStream(RTMP_SCHEMA, ".flv", [this, cb, start_pts](const MediaSource::Ptr &src) {
+    return checkLiveStream(RTMP_SCHEMA, ".live.flv", [this, cb, start_pts](const MediaSource::Ptr &src) {
         auto rtmp_src = dynamic_pointer_cast<RtmpMediaSource>(src);
         assert(rtmp_src);
         if (!cb) {
@@ -517,16 +528,16 @@ void HttpSession::sendResponse(int code,
     GET_CONFIG(uint32_t,keepAliveSec,Http::kKeepAliveSecond);
 
     //body默认为空
-    ssize_t size = 0;
+    int64_t size = 0;
     if (body && body->remainSize()) {
         //有body，获取body大小
         size = body->remainSize();
     }
 
-    if(no_content_length){
-        //http-flv直播是Keep-Alive类型
+    if (no_content_length) {
+        // http-flv直播是Keep-Alive类型
         bClose = false;
-    }else if((size_t) size >= SIZE_MAX || size < 0 ){
+    } else if ((size_t)size >= SIZE_MAX || size < 0) {
         //不固定长度的body，那么发送完body后应该关闭socket，以便浏览器做下载完毕的判断
         bClose = true;
     }
@@ -535,47 +546,47 @@ void HttpSession::sendResponse(int code,
     headerOut.emplace(kDate, dateStr());
     headerOut.emplace(kServer, kServerName);
     headerOut.emplace(kConnection, bClose ? "close" : "keep-alive");
-    if(!bClose){
+    if (!bClose) {
         string keepAliveString = "timeout=";
         keepAliveString += to_string(keepAliveSec);
         keepAliveString += ", max=100";
-        headerOut.emplace(kKeepAlive,std::move(keepAliveString));
+        headerOut.emplace(kKeepAlive, std::move(keepAliveString));
     }
 
-    if(!_origin.empty()){
+    if (!_origin.empty()) {
         //设置跨域
-        headerOut.emplace(kAccessControlAllowOrigin,_origin);
+        headerOut.emplace(kAccessControlAllowOrigin, _origin);
         headerOut.emplace(kAccessControlAllowCredentials, "true");
     }
 
-    if(!no_content_length && size >= 0 && (size_t)size < SIZE_MAX){
+    if (!no_content_length && size >= 0 && (size_t)size < SIZE_MAX) {
         //文件长度为固定值,且不是http-flv强制设置Content-Length
         headerOut[kContentLength] = to_string(size);
     }
 
-    if(size && !pcContentType){
+    if (size && !pcContentType) {
         //有body时，设置缺省类型
         pcContentType = "text/plain";
     }
 
-    if((size || no_content_length) && pcContentType){
+    if ((size || no_content_length) && pcContentType) {
         //有body时，设置文件类型
         string strContentType = pcContentType;
         strContentType += "; charset=";
         strContentType += charSet;
-        headerOut.emplace(kContentType,std::move(strContentType));
+        headerOut.emplace(kContentType, std::move(strContentType));
     }
 
     //发送http头
     string str;
     str.reserve(256);
-    str += "HTTP/1.1 " ;
+    str += "HTTP/1.1 ";
     str += to_string(code);
     str += ' ';
-    str += getHttpStatusMessage(code) ;
+    str += getHttpStatusMessage(code);
     str += "\r\n";
     for (auto &pr : header) {
-        str += pr.first ;
+        str += pr.first;
         str += ": ";
         str += pr.second;
         str += "\r\n";
@@ -584,25 +595,31 @@ void HttpSession::sendResponse(int code,
     SockSender::send(std::move(str));
     _ticker.resetTime();
 
-    if(!size){
+    if (!size) {
         //没有body
-        if(bClose){
+        if (bClose) {
             shutdown(SockException(Err_shutdown,StrPrinter << "close connection after send http header completed with status code:" << code));
         }
         return;
     }
 
+#if 0
+    //sendfile跟共享mmap相比并没有性能上的优势，相反，sendfile还有功能上的缺陷，先屏蔽
+    if (typeid(*this) == typeid(HttpSession) && !body->sendFile(getSock()->rawFD())) {
+        // http支持sendfile优化
+        return;
+    }
+#endif
+
     GET_CONFIG(uint32_t, sendBufSize, Http::kSendBufSize);
-    if(body->remainSize() > sendBufSize){
+    if (body->remainSize() > sendBufSize) {
         //文件下载提升发送性能
         setSocketFlags();
     }
 
     //发送http body
-    AsyncSenderData::Ptr data = std::make_shared<AsyncSenderData>(shared_from_this(),body,bClose);
-    getSock()->setOnFlush([data](){
-        return AsyncSender::onSocketFlushed(data);
-    });
+    AsyncSenderData::Ptr data = std::make_shared<AsyncSenderData>(shared_from_this(), body, bClose);
+    getSock()->setOnFlush([data]() { return AsyncSender::onSocketFlushed(data); });
     AsyncSender::onSocketFlushed(data);
 }
 
@@ -724,8 +741,8 @@ void HttpSession::Handle_Req_POST(ssize_t &content_len) {
 }
 
 void HttpSession::sendNotFound(bool bClose) {
-    GET_CONFIG(string,notFound,Http::kNotFound);
-    sendResponse(404, bClose,"text/html",KeyValue(),std::make_shared<HttpStringBody>(notFound));
+    GET_CONFIG(string, notFound, Http::kNotFound);
+    sendResponse(404, bClose, "text/html", KeyValue(), std::make_shared<HttpStringBody>(notFound));
 }
 
 void HttpSession::setSocketFlags(){

@@ -16,6 +16,8 @@
 #include "Http/HttpBody.h"
 #include "Http/HttpClient.h"
 #include "Rtsp/RtspSession.h"
+
+using namespace toolkit;
 using namespace mediakit;
 
 ///////////////////////////////////////////RecordInfo/////////////////////////////////////////////
@@ -247,7 +249,7 @@ API_EXPORT mk_http_body API_CALL mk_http_body_from_string(const char *str, size_
     if(!len){
         len = strlen(str);
     }
-    return new HttpBody::Ptr(new HttpStringBody(string(str,len)));
+    return new HttpBody::Ptr(new HttpStringBody(std::string(str, len)));
 }
 
 API_EXPORT mk_http_body API_CALL mk_http_body_from_file(const char *file_path){
@@ -398,7 +400,10 @@ API_EXPORT void API_CALL mk_publish_auth_invoker_do(const mk_publish_auth_invoke
                                                     int enable_mp4){
     assert(ctx);
     Broadcast::PublishAuthInvoker *invoker = (Broadcast::PublishAuthInvoker *)ctx;
-    (*invoker)(err_msg ? err_msg : "", enable_hls, enable_mp4);
+    ProtocolOption option;
+    option.enable_hls = enable_hls;
+    option.enable_mp4 = enable_mp4;
+    (*invoker)(err_msg ? err_msg : "", option);
 }
 
 API_EXPORT mk_publish_auth_invoker API_CALL mk_publish_auth_invoker_clone(const mk_publish_auth_invoker ctx){

@@ -13,6 +13,9 @@
 #include "RtpProcess.h"
 #include "Http/HttpTSPlayer.h"
 
+using namespace std;
+using namespace toolkit;
+
 static constexpr char kRtpAppName[] = "rtp";
 //在创建_muxer对象前(也就是推流鉴权成功前)，需要先缓存frame，这样可以防止丢包，提高体验
 //但是同时需要控制缓冲长度，防止内存溢出。200帧数据，大概有10秒数据，应该足矣等待鉴权hook返回
@@ -230,16 +233,16 @@ void RtpProcess::setListener(const std::weak_ptr<MediaSourceEvent> &listener) {
 
 void RtpProcess::emitOnPublish() {
     weak_ptr<RtpProcess> weak_self = shared_from_this();
-    Broadcast::PublishAuthInvoker invoker = [weak_self](const string &err, bool enableHls, bool enableMP4) {
+    Broadcast::PublishAuthInvoker invoker = [weak_self](const string &err, const ProtocolOption &option) {
         auto strong_self = weak_self.lock();
         if (!strong_self) {
             return;
         }
         if (err.empty()) {
             strong_self->_muxer = std::make_shared<MultiMediaSourceMuxer>(strong_self->_media_info._vhost,
-                                                                         strong_self->_media_info._app,
-                                                                         strong_self->_media_info._streamid, 0.0f,
-                                                                         true, true, enableHls, enableMP4);
+                                                                          strong_self->_media_info._app,
+                                                                          strong_self->_media_info._streamid, 0.0f,
+                                                                          option);
             strong_self->_muxer->setMediaListener(strong_self);
             strong_self->doCachedFunc();
             InfoP(strong_self) << "允许RTP推流";
@@ -249,12 +252,10 @@ void RtpProcess::emitOnPublish() {
     };
 
     //触发推流鉴权事件
-    auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPublish, _media_info, invoker, static_cast<SockInfo &>(*this));
+    auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPublish, MediaOriginType::rtp_push, _media_info, invoker, static_cast<SockInfo &>(*this));
     if (!flag) {
         //该事件无人监听,默认不鉴权
-        GET_CONFIG(bool, toHls, General::kPublishToHls);
-        GET_CONFIG(bool, toMP4, General::kPublishToMP4);
-        invoker("", toHls, toMP4);
+        invoker("", ProtocolOption());
     }
 }
 

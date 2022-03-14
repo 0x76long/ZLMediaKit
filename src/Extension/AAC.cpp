@@ -13,6 +13,9 @@
 #include "mpeg4-aac.h"
 #endif
 
+using namespace std;
+using namespace toolkit;
+
 namespace mediakit{
 
 #ifndef ENABLE_MP4
@@ -279,6 +282,11 @@ bool AACTrack::inputFrame(const Frame::Ptr &frame) {
         }
         auto sub_frame = std::make_shared<FrameInternal<FrameFromPtr> >(frame, (char *) ptr, frame_len, ADTS_HEADER_LEN);
         ptr += frame_len;
+        if (ptr > end) {
+            WarnL << "invalid aac length in adts header: " << frame_len
+                  << ", remain data size: " << end - (ptr - frame_len);
+            break;
+        }
         sub_frame->setCodecId(CodecAAC);
         if (inputFrame_l(sub_frame)) {
             ret = true;
