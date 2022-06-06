@@ -94,6 +94,8 @@ public:
         bool use_ps = true;
         //发送es流时指定是否只发送纯音频流
         bool only_audio = true;
+        //tcp被动方式
+        bool passive = false;
         // rtp payload type
         uint8_t pt = 96;
         // 指定rtp ssrc
@@ -159,7 +161,7 @@ public:
     std::string _full_url;
     std::string _schema;
     std::string _host;
-    std::string _port;
+    uint16_t _port = 0;
     std::string _vhost;
     std::string _app;
     std::string _streamid;
