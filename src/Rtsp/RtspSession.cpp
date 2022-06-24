@@ -868,7 +868,7 @@ void RtspSession::handleReq_Pause(const Parser &parser) {
 
 void RtspSession::handleReq_Teardown(const Parser &parser) {
     sendRtspResponse("200 OK");
-    _push_src = nullptr;
+    //_push_src = nullptr;
     throw SockException(Err_shutdown,"recv teardown request");
 }
 
@@ -1151,6 +1151,10 @@ string RtspSession::getOriginUrl(MediaSource &sender) const {
 
 std::shared_ptr<SockInfo> RtspSession::getOriginSock(MediaSource &sender) const {
     return const_cast<RtspSession *>(this)->shared_from_this();
+}
+
+toolkit::EventPoller::Ptr RtspSession::getOwnerPoller(MediaSource &sender) {
+    return getPoller();
 }
 
 void RtspSession::onBeforeRtpSorted(const RtpPacket::Ptr &rtp, int track_index){

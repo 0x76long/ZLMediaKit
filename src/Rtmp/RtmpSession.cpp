@@ -222,7 +222,7 @@ void RtmpSession::onCmd_deleteStream(AMFDecoder &dec) {
     sendStatus({ "level", "status",
                  "code", "NetStream.Unpublish.Success",
                  "description", "Stop publishing." });
-    _push_src = nullptr;
+    //_push_src = nullptr;
     throw std::runtime_error(StrPrinter << "Stop publishing" << endl);
 }
 
@@ -596,6 +596,10 @@ string RtmpSession::getOriginUrl(MediaSource &sender) const {
 
 std::shared_ptr<SockInfo> RtmpSession::getOriginSock(MediaSource &sender) const {
     return const_cast<RtmpSession *>(this)->shared_from_this();
+}
+
+toolkit::EventPoller::Ptr RtmpSession::getOwnerPoller(MediaSource &sender) {
+    return getPoller();
 }
 
 void RtmpSession::setSocketFlags(){

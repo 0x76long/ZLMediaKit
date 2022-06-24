@@ -147,3 +147,11 @@ void WebRtcPusher::onRtcConfigure(RtcConfigure &configure) const {
     //这只是推流
     configure.audio.direction = configure.video.direction = RtpDirection::recvonly;
 }
+
+int WebRtcPusher::getLossRate(MediaSource &sender,mediakit::TrackType type){
+    return WebRtcTransportImp::getLossRate(type);
+}
+
+toolkit::EventPoller::Ptr WebRtcPusher::getOwnerPoller(mediakit::MediaSource &sender) {
+    return getPoller();
+}
