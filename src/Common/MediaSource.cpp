@@ -44,15 +44,19 @@ string getOriginTypeString(MediaOriginType type){
 }
 
 static string getOriginUrl_l(const MediaSource *thiz) {
-    if (thiz == MediaSource::NullMediaSource) {
-        return "";
-    }
     return thiz->getSchema() + "://" + thiz->getVhost() + "/" + thiz->getApp() + "/" + thiz->getId();
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+struct MediaSourceNull : public MediaSource {
+    MediaSourceNull() : MediaSource("schema", "vhost", "app", "stream") {};
+    int readerCount() override { return 0; }
+};
 
-MediaSource * const MediaSource::NullMediaSource = nullptr;
+MediaSource &MediaSource::NullMediaSource() {
+    static std::shared_ptr<MediaSource> s_null = std::make_shared<MediaSourceNull>();
+    return *s_null;
+}
 
 MediaSource::MediaSource(const string &schema, const string &vhost, const string &app, const string &stream_id){
     GET_CONFIG(bool, enableVhost, General::kEnableVhost);
@@ -572,8 +576,8 @@ MediaSource::Ptr MediaSource::createFromMP4(const string &schema, const string &
     }
 #ifdef ENABLE_MP4
     try {
-        MP4Reader::Ptr pReader(new MP4Reader(vhost, app, stream, file_path));
-        pReader->startReadMP4();
+        auto reader = std::make_shared<MP4Reader>(vhost, app, stream, file_path);
+        reader->startReadMP4();
         return MediaSource::find(schema, vhost, app, stream);
     } catch (std::exception &ex) {
         WarnL << ex.what();
@@ -588,7 +592,7 @@ MediaSource::Ptr MediaSource::createFromMP4(const string &schema, const string &
 /////////////////////////////////////MediaSourceEvent//////////////////////////////////////
 
 void MediaSourceEvent::onReaderChanged(MediaSource &sender, int size){
-    if (size || totalReaderCount(sender)) {
+    if (size || sender.totalReaderCount()) {
         //还有人观看该视频，不触发关闭事件
         _async_close_timer = nullptr;
         return;
@@ -729,9 +733,8 @@ toolkit::EventPoller::Ptr MediaSourceEventInterceptor::getOwnerPoller(MediaSourc
     if (listener) {
         return listener->getOwnerPoller(sender);
     }
-    return nullptr;
+    return EventPollerPool::Instance().getPoller();
 }
-
 
 bool MediaSourceEventInterceptor::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) {
     auto listener = _listener.lock();

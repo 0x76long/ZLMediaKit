@@ -556,7 +556,7 @@ void SdpAttrRtpMap::parse(const string &str)  {
 
 string SdpAttrRtpMap::toString() const  {
     if (value.empty()) {
-        value = to_string(pt) + " " + codec + "/" + to_string(sample_rate);
+        value = to_string((int)pt) + " " + codec + "/" + to_string(sample_rate);
         if (channel) {
             value += '/';
             value += to_string(channel);
@@ -574,7 +574,7 @@ void SdpAttrRtcpFb::parse(const string &str_in)  {
 
 string SdpAttrRtcpFb::toString() const  {
     if (value.empty()) {
-        value = to_string(pt) + " " + rtcp_type;
+        value = to_string((int)pt) + " " + rtcp_type;
     }
     return SdpItem::toString();
 }
@@ -598,7 +598,7 @@ void SdpAttrFmtp::parse(const string &str)  {
 
 string SdpAttrFmtp::toString() const  {
     if (value.empty()) {
-        value = to_string(pt);
+        value = to_string((int)pt);
         int i = 0;
         for (auto &pr : fmtp) {
             value += (i++  ? ';' : ' ');
@@ -771,7 +771,6 @@ void RtcSession::loadFrom(const string &str) {
     session_name = sdp.getSessionName();
     session_info = sdp.getSessionInfo();
     connection = sdp.getConnection();
-    bandwidth = sdp.getBandwidth();
     time = sdp.getSessionTime();
     msid_semantic = sdp.getItemClass<SdpAttrMsidSemantic>('a', "msid-semantic");
     for (auto &media : sdp.medias) {
@@ -783,6 +782,7 @@ void RtcSession::loadFrom(const string &str) {
         rtc_media.type = mline.type;
         rtc_media.port = mline.port;
         rtc_media.addr = media.getItemClass<SdpConnection>('c');
+        rtc_media.bandwidth = media.getItemClass<SdpBandwidth>('b');
         rtc_media.ice_ufrag = media.getStringItem('a', "ice-ufrag");
         rtc_media.ice_pwd = media.getStringItem('a', "ice-pwd");
         rtc_media.role = media.getItemClass<SdpAttrSetup>('a', "setup").role;
@@ -1060,9 +1060,6 @@ RtcSessionSdp::Ptr RtcSession::toRtcSessionSdp() const{
     if(connection.empty()){
         sdp.addItem(std::make_shared<SdpConnection>(connection));
     }
-    if (!bandwidth.empty()) {
-        sdp.addItem(std::make_shared<SdpBandwidth>(bandwidth));
-    }
     sdp.addAttr(std::make_shared<SdpAttrGroup>(group));
     sdp.addAttr(std::make_shared<SdpAttrMsidSemantic>(msid_semantic));
     for (auto &m : media) {
@@ -1073,13 +1070,16 @@ RtcSessionSdp::Ptr RtcSession::toRtcSessionSdp() const{
         mline->port = m.port;
         mline->proto = m.proto;
         for (auto &p : m.plan) {
-            mline->fmts.emplace_back(to_string(p.pt));
+            mline->fmts.emplace_back(to_string((int)p.pt));
         }
         if (m.type == TrackApplication) {
             mline->fmts.emplace_back("webrtc-datachannel");
         }
         sdp_media.addItem(std::move(mline));
         sdp_media.addItem(std::make_shared<SdpConnection>(m.addr));
+        if (!m.bandwidth.empty() && m.type != TrackAudio) {
+            sdp_media.addItem(std::make_shared<SdpBandwidth>(m.bandwidth));
+        }
         if (!m.rtcp_addr.empty()) {
             sdp_media.addAttr(std::make_shared<SdpAttrRtcp>(m.rtcp_addr));
         }
@@ -1311,6 +1311,10 @@ void RtcSession::checkValid() const{
     bool have_active_media = false;
     for (auto &item : media) {
         item.checkValid();
+
+        if (TrackApplication == item.type) {
+            have_active_media = true;
+        }
         switch (item.direction) {
             case RtpDirection::sendrecv:
             case RtpDirection::sendonly:
@@ -1346,6 +1350,10 @@ bool RtcSession::supportSimulcast() const {
         }
     }
     return false;
+}
+
+bool RtcSession::isOnlyDatachannel() const {
+    return 1 == media.size() && TrackApplication == media[0].type;
 }
 
 string const SdpConst::kTWCCRtcpFb = "transport-cc";
@@ -1596,6 +1604,10 @@ RETRY:
 #ifdef ENABLE_SCTP
         answer_media.direction = matchDirection(offer_media.direction, configure.direction);
         answer_media.candidate = configure.candidate;
+        answer_media.ice_ufrag = configure.ice_ufrag;
+        answer_media.ice_pwd = configure.ice_pwd;
+        answer_media.fingerprint = configure.fingerprint;
+        answer_media.ice_lite = configure.ice_lite;
 #else
         answer_media.direction = RtpDirection::inactive;
 #endif
@@ -1631,6 +1643,7 @@ RETRY:
         answer_media.proto = offer_media.proto;
         answer_media.port = offer_media.port;
         answer_media.addr = offer_media.addr;
+        answer_media.bandwidth = offer_media.bandwidth;
         answer_media.rtcp_addr = offer_media.rtcp_addr;
         answer_media.rtcp_mux = offer_media.rtcp_mux && configure.rtcp_mux;
         answer_media.rtcp_rsize = offer_media.rtcp_rsize && configure.rtcp_rsize;
