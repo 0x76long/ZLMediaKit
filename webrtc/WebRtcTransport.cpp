@@ -650,10 +650,10 @@ public:
         return _rtcp_context.createRtcpRR(ssrc, getSSRC());
     }
 
-    int getLossRate() {
+    float getLossRate() {
         auto expected = _rtcp_context.getExpectedPacketsInterval();
         if (!expected) {
-            return 0;
+            return -1;
         }
         return _rtcp_context.geLostInterval() * 100 / expected;
     }
@@ -698,7 +698,7 @@ std::shared_ptr<RtpChannel> MediaTrack::getRtpChannel(uint32_t ssrc) const {
     return it_chn->second;
 }
 
-int WebRtcTransportImp::getLossRate(mediakit::TrackType type) {
+float WebRtcTransportImp::getLossRate(mediakit::TrackType type) {
     for (auto &pr : _ssrc_to_track) {
         auto ssrc = pr.first;
         auto &track = pr.second;
@@ -718,6 +718,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
     for (auto rtcp : rtcps) {
         switch ((RtcpType)rtcp->pt) {
         case RtcpType::RTCP_SR: {
+            _alive_ticker.resetTime();
             // 对方汇报rtp发送情况
             RtcpSR *sr = (RtcpSR *)rtcp;
             auto it = _ssrc_to_track.find(sr->ssrc);
@@ -766,6 +767,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
                 }
                 _ssrc_to_track.erase(it);
             }
+            onRtcpBye();
             onShutdown(SockException(Err_eof, "rtcp bye message received"));
             break;
         }
@@ -1050,6 +1052,8 @@ uint64_t WebRtcTransportImp::getBytesUsage() const {
 uint64_t WebRtcTransportImp::getDuration() const {
     return _alive_ticker.createdTime() / 1000;
 }
+
+void WebRtcTransportImp::onRtcpBye(){}
 
 /////////////////////////////////////////////////////////////////////////////////////////////
 

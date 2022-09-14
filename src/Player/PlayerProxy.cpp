@@ -115,7 +115,6 @@ void PlayerProxy::setDirectProxy() {
     }
     if (mediaSource) {
         setMediaSource(mediaSource);
-        mediaSource->setListener(shared_from_this());
     }
 }
 
@@ -161,7 +160,7 @@ bool PlayerProxy::close(MediaSource &sender, bool force) {
         strongSelf->teardown();
     });
     _on_close(SockException(Err_shutdown, "closed by user"));
-    WarnL << sender.getSchema() << "/" << sender.getVhost() << "/" << sender.getApp() << "/" << sender.getId() << " " << force;
+    WarnL << sender.getUrl() << " " << force;
     return true;
 }
 
@@ -183,6 +182,10 @@ string PlayerProxy::getOriginUrl(MediaSource &sender) const {
 
 std::shared_ptr<SockInfo> PlayerProxy::getOriginSock(MediaSource &sender) const {
     return getSockInfo();
+}
+
+float PlayerProxy::getLossRate(MediaSource &sender, TrackType type) {
+    return getPacketLossRate(type);
 }
 
 void PlayerProxy::onPlaySuccess() {
