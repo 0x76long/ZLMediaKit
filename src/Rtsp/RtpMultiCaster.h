@@ -15,16 +15,14 @@
 #include <memory>
 #include <unordered_set>
 #include <unordered_map>
-#include "Common/config.h"
 #include "RtspMediaSource.h"
-#include "Util/mini.h"
 #include "Network/Socket.h"
 
 namespace mediakit{
 
 class MultiCastAddressMaker {
 public:
-    ~MultiCastAddressMaker() {}
+    ~MultiCastAddressMaker() = default;
     static MultiCastAddressMaker& Instance();
     static bool isMultiCastAddress(uint32_t addr);
     static std::string toString(uint32_t addr);
@@ -32,7 +30,7 @@ public:
     std::shared_ptr<uint32_t> obtain(uint32_t max_try = 10);
 
 private:
-    MultiCastAddressMaker() {};
+    MultiCastAddressMaker() = default;
     void release(uint32_t addr);
 
 private:
@@ -43,8 +41,9 @@ private:
 
 class RtpMultiCaster {
 public:
-    typedef std::shared_ptr<RtpMultiCaster> Ptr;
-    typedef std::function<void()> onDetach;
+    using Ptr = std::shared_ptr<RtpMultiCaster>;
+    using onDetach = std::function<void()>;
+
     ~RtpMultiCaster();
 
     static Ptr get(toolkit::SocketHelper &helper, const std::string &local_ip, const std::string &vhost, const std::string &app, const std::string &stream);

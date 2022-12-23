@@ -14,16 +14,18 @@
 #include "PSEncoder.h"
 #include "Extension/CommonRtp.h"
 #include "Rtcp/RtcpContext.h"
+#include "Common/MediaSource.h"
+#include "Common/MediaSink.h"
 
 namespace mediakit{
 
 //rtp发送客户端，支持发送GB28181协议
-class RtpSender : public MediaSinkInterface, public std::enable_shared_from_this<RtpSender>{
+class RtpSender final : public MediaSinkInterface, public std::enable_shared_from_this<RtpSender>{
 public:
-    typedef std::shared_ptr<RtpSender> Ptr;
+    using Ptr = std::shared_ptr<RtpSender>;
 
     RtpSender(toolkit::EventPoller::Ptr poller = nullptr);
-    ~RtpSender() override = default;
+    ~RtpSender() override;
 
     /**
      * 开始发送ps-rtp包
@@ -36,6 +38,11 @@ public:
      * 输入帧数据
      */
     bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出frame缓存
+     */
+    void flush() override;
 
     /**
      * 添加track，内部会调用Track的clone方法

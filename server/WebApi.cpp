@@ -17,6 +17,7 @@
 #include "Util/logger.h"
 #include "Util/onceToken.h"
 #include "Util/NoticeCenter.h"
+#include "Util/File.h"
 #ifdef ENABLE_MYSQL
 #include "Util/SqlPool.h"
 #endif //ENABLE_MYSQL
@@ -344,7 +345,8 @@ Value makeMediaSourceJson(MediaSource &media){
     }
 
     //getLossRate有线程安全问题；使用getMediaInfo接口才能获取丢包率；getMediaList接口将忽略丢包率
-    auto current_thread = media.getOwnerPoller()->isCurrentThread();
+    auto current_thread = false;
+    try { current_thread = media.getOwnerPoller()->isCurrentThread();} catch (...) {}
     float last_loss = -1;
     for(auto &track : media.getTracks(false)){
         Value obj;
@@ -400,7 +402,7 @@ uint16_t openRtpServer(uint16_t local_port, const string &stream_id, int tcp_mod
         //设置rtp超时移除事件
         lock_guard<recursive_mutex> lck(s_rtpServerMapMtx);
         s_rtpServerMap.erase(stream_id);
-        });
+    });
 
     //保存对象
     s_rtpServerMap.emplace(stream_id, server);
@@ -854,7 +856,7 @@ void installWebApi() {
         val["count_closed"] = count_closed;
     });
 
-    //获取所有TcpSession列表信息
+    //获取所有Session列表信息
     //可以根据本地端口和远端ip来筛选
     //测试url(筛选某端口下的tcp会话) http://127.0.0.1/index/api/getAllSession?local_port=1935
     api_regist("/index/api/getAllSession",[](API_ARGS_MAP){
@@ -1011,20 +1013,7 @@ void installWebApi() {
         CHECK_SECRET();
         CHECK_ARGS("vhost","app","stream","url");
 
-        ProtocolOption option;
-        getArgsValue(allArgs, "enable_hls", option.enable_hls);
-        getArgsValue(allArgs, "enable_mp4", option.enable_mp4);
-        getArgsValue(allArgs, "mp4_as_player", option.mp4_as_player);
-        getArgsValue(allArgs, "enable_rtsp", option.enable_rtsp);
-        getArgsValue(allArgs, "enable_rtmp", option.enable_rtmp);
-        getArgsValue(allArgs, "enable_ts", option.enable_ts);
-        getArgsValue(allArgs, "enable_fmp4", option.enable_fmp4);
-        getArgsValue(allArgs, "enable_audio", option.enable_audio);
-        getArgsValue(allArgs, "add_mute_audio", option.add_mute_audio);
-        getArgsValue(allArgs, "mp4_save_path", option.mp4_save_path);
-        getArgsValue(allArgs, "mp4_max_second", option.mp4_max_second);
-        getArgsValue(allArgs, "hls_save_path", option.hls_save_path);
-        getArgsValue(allArgs, "modify_stamp", option.modify_stamp);
+        ProtocolOption option(allArgs);
 
         addStreamProxy(allArgs["vhost"],
                        allArgs["app"],
@@ -1591,9 +1580,9 @@ void installWebApi() {
         auto offer = allArgs.getArgs();
         CHECK(!offer.empty(), "http body(webrtc offer sdp) is empty");
 
-        WebRtcPluginManager::Instance().getAnswerSdp(
-            *(static_cast<Session *>(&sender)), type, offer, WebRtcArgsImp(allArgs, sender.getIdentifier()),
-            [invoker, val, offer, headerOut](const WebRtcInterface &exchanger) mutable {
+        WebRtcPluginManager::Instance().getAnswerSdp(*(static_cast<Session *>(&sender)), type,
+                                                     WebRtcArgsImp(allArgs, sender.getIdentifier()),
+                                                     [invoker, val, offer, headerOut](const WebRtcInterface &exchanger) mutable {
             //设置返回类型
             headerOut["Content-Type"] = HttpFileManager::getContentType(".json");
             //设置跨域
@@ -1629,9 +1618,9 @@ void installWebApi() {
     api_regist("/index/hook/on_publish",[](API_ARGS_JSON){
         //开始推流事件
         //转换hls
-        val["enableHls"] = true;
+        val["enable_hls"] = true;
         //不录制mp4
-        val["enableMP4"] = false;
+        val["enable_mp4"] = false;
     });
 
     api_regist("/index/hook/on_play",[](API_ARGS_JSON){
@@ -1773,6 +1762,11 @@ void installWebApi() {
 
     api_regist("/index/hook/on_server_keepalive",[](API_ARGS_JSON){
         //心跳hook
+    });
+
+    api_regist("/index/hook/on_rtp_server_timeout",[](API_ARGS_JSON){
+        //rtp server 超时
+        TraceL <<allArgs.getArgs().toStyledString();
     });
 }
 

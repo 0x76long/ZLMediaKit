@@ -13,7 +13,6 @@
 #include <iostream>
 
 #include "Util/MD5.h"
-#include "Util/File.h"
 #include "Util/logger.h"
 #include "Util/SSLBox.h"
 #include "Util/onceToken.h"
@@ -83,7 +82,7 @@ onceToken token1([](){
 }  // namespace mediakit
 
 
-#define REALM "realm_zlmedaikit"
+#define REALM "realm_zlmediakit"
 static map<string,FlvRecorder::Ptr> s_mapFlvRecorder;
 static mutex s_mtxFlvRecorder;
 

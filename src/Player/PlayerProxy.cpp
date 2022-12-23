@@ -14,6 +14,10 @@
 #include "Util/MD5.h"
 #include "Util/logger.h"
 #include "Extension/AAC.h"
+#include "Rtmp/RtmpMediaSource.h"
+#include "Rtsp/RtspMediaSource.h"
+#include "Rtmp/RtmpPlayer.h"
+#include "Rtsp/RtspPlayer.h"
 
 using namespace toolkit;
 using namespace std;
@@ -143,11 +147,7 @@ void PlayerProxy::rePlay(const string &strUrl, int iFailedCnt) {
     }, getPoller());
 }
 
-bool PlayerProxy::close(MediaSource &sender, bool force) {
-    if (!force && totalReaderCount()) {
-        return false;
-    }
-
+bool PlayerProxy::close(MediaSource &sender) {
     //通知其停止推流
     weak_ptr<PlayerProxy> weakSelf = dynamic_pointer_cast<PlayerProxy>(shared_from_this());
     getPoller()->async_first([weakSelf]() {
@@ -160,7 +160,7 @@ bool PlayerProxy::close(MediaSource &sender, bool force) {
         strongSelf->teardown();
     });
     _on_close(SockException(Err_shutdown, "closed by user"));
-    WarnL << sender.getUrl() << " " << force;
+    WarnL << "close media: " << sender.getUrl();
     return true;
 }
 

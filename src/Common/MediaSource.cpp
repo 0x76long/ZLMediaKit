@@ -7,14 +7,16 @@
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
-
-#include "MediaSource.h"
-#include "Record/MP4Reader.h"
+#include <mutex>
 #include "Util/util.h"
-#include "Network/sockutil.h"
-#include "Network/TcpSession.h"
 #include "Util/NoticeCenter.h"
-
+#include "Network/sockutil.h"
+#include "Network/Session.h"
+#include "MediaSource.h"
+#include "Common/config.h"
+#include "Common/Parser.h"
+#include "Record/MP4Reader.h"
+#include "PacketCache.h"
 using namespace std;
 using namespace toolkit;
 
@@ -49,6 +51,59 @@ string getOriginTypeString(MediaOriginType type){
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ProtocolOption::ProtocolOption() {
+    GET_CONFIG(bool, s_modify_stamp, Protocol::kModifyStamp);
+    GET_CONFIG(bool, s_enabel_audio, Protocol::kEnableAudio);
+    GET_CONFIG(bool, s_add_mute_audio, Protocol::kAddMuteAudio);
+    GET_CONFIG(uint32_t, s_continue_push_ms, Protocol::kContinuePushMS);
+
+    GET_CONFIG(bool, s_enable_hls, Protocol::kEnableHls);
+    GET_CONFIG(bool, s_enable_mp4, Protocol::kEnableMP4);
+    GET_CONFIG(bool, s_enable_rtsp, Protocol::kEnableRtsp);
+    GET_CONFIG(bool, s_enable_rtmp, Protocol::kEnableRtmp);
+    GET_CONFIG(bool, s_enable_ts, Protocol::kEnableTS);
+    GET_CONFIG(bool, s_enable_fmp4, Protocol::kEnableFMP4);
+
+    GET_CONFIG(bool, s_hls_demand, Protocol::kHlsDemand);
+    GET_CONFIG(bool, s_rtsp_demand, Protocol::kRtspDemand);
+    GET_CONFIG(bool, s_rtmp_demand, Protocol::kRtmpDemand);
+    GET_CONFIG(bool, s_ts_demand, Protocol::kTSDemand);
+    GET_CONFIG(bool, s_fmp4_demand, Protocol::kFMP4Demand);
+
+    GET_CONFIG(bool, s_mp4_as_player, Protocol::kMP4AsPlayer);
+    GET_CONFIG(uint32_t, s_mp4_max_second, Protocol::kMP4MaxSecond);
+    GET_CONFIG(string, s_mp4_save_path, Protocol::kMP4SavePath);
+
+    GET_CONFIG(string, s_hls_save_path, Protocol::kHlsSavePath);
+
+    modify_stamp = s_modify_stamp;
+    enable_audio = s_enabel_audio;
+    add_mute_audio = s_add_mute_audio;
+    continue_push_ms = s_continue_push_ms;
+
+    enable_hls = s_enable_hls;
+    enable_mp4 = s_enable_mp4;
+    enable_rtsp = s_enable_rtsp;
+    enable_rtmp = s_enable_rtmp;
+    enable_ts = s_enable_ts;
+    enable_fmp4 = s_enable_fmp4;
+
+    hls_demand = s_hls_demand;
+    rtsp_demand = s_rtsp_demand;
+    rtmp_demand = s_rtmp_demand;
+    ts_demand = s_ts_demand;
+    fmp4_demand = s_fmp4_demand;
+
+    mp4_as_player = s_mp4_as_player;
+    mp4_max_second = s_mp4_max_second;
+    mp4_save_path = s_mp4_save_path;
+
+    hls_save_path = s_hls_save_path;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 struct MediaSourceNull : public MediaSource {
     MediaSourceNull() : MediaSource("schema", "vhost", "app", "stream") {};
     int readerCount() override { return 0; }
@@ -70,7 +125,6 @@ MediaSource::MediaSource(const string &schema, const string &vhost, const string
     _app = app;
     _stream_id = stream_id;
     _create_stamp = time(NULL);
-    _default_poller = EventPollerPool::Instance().getPoller();
 }
 
 MediaSource::~MediaSource() {
@@ -211,10 +265,14 @@ bool MediaSource::speed(float speed) {
 
 bool MediaSource::close(bool force) {
     auto listener = _listener.lock();
-    if(!listener){
+    if (!listener) {
         return false;
     }
-    return listener->close(*this,force);
+    if (!force && totalReaderCount()) {
+        //有人观看，不强制关闭
+        return false;
+    }
+    return listener->close(*this);
 }
 
 float MediaSource::getLossRate(mediakit::TrackType type) {
@@ -229,23 +287,31 @@ toolkit::EventPoller::Ptr MediaSource::getOwnerPoller() {
     toolkit::EventPoller::Ptr ret;
     auto listener = _listener.lock();
     if (listener) {
-        ret = listener->getOwnerPoller(*this);
+        return listener->getOwnerPoller(*this);
     }
-    return ret ? ret : _default_poller;
+    throw std::runtime_error(toolkit::demangle(typeid(*this).name()) + "::getOwnerPoller failed: " + getUrl());
 }
 
 void MediaSource::onReaderChanged(int size) {
-    weak_ptr<MediaSource> weak_self = shared_from_this();
-    getOwnerPoller()->async([weak_self, size]() {
-        auto strong_self = weak_self.lock();
-        if (!strong_self) {
-            return;
-        }
-        auto listener = strong_self->_listener.lock();
-        if (listener) {
-            listener->onReaderChanged(*strong_self, size);
-        }
-    });
+    try {
+        weak_ptr<MediaSource> weak_self = shared_from_this();
+        getOwnerPoller()->async([weak_self, size]() {
+            auto strong_self = weak_self.lock();
+            if (!strong_self) {
+                return;
+            }
+            auto listener = strong_self->_listener.lock();
+            if (listener) {
+                listener->onReaderChanged(*strong_self, size);
+            }
+        });
+    } catch (MediaSourceEvent::NotImplemented &ex) {
+        // 未实现接口，应该打印异常
+        WarnL << ex.what();
+    } catch (...) {
+        // getOwnerPoller()接口抛异常机制应该只对外不对内
+        // 所以listener已经销毁导致获取归属线程失败的异常直接忽略
+    }
 }
 
 bool MediaSource::setupRecord(Recorder::type type, bool start, const string &custom_path, size_t max_second){
@@ -680,12 +746,12 @@ bool MediaSourceEventInterceptor::speed(MediaSource &sender, float speed) {
     return listener->speed(sender, speed);
 }
 
-bool MediaSourceEventInterceptor::close(MediaSource &sender, bool force) {
+bool MediaSourceEventInterceptor::close(MediaSource &sender) {
     auto listener = _listener.lock();
     if (!listener) {
         return false;
     }
-    return listener->close(sender, force);
+    return listener->close(sender);
 }
 
 int MediaSourceEventInterceptor::totalReaderCount(MediaSource &sender) {
@@ -725,7 +791,7 @@ toolkit::EventPoller::Ptr MediaSourceEventInterceptor::getOwnerPoller(MediaSourc
     if (listener) {
         return listener->getOwnerPoller(sender);
     }
-    return EventPollerPool::Instance().getPoller();
+    throw std::runtime_error(toolkit::demangle(typeid(*this).name()) + "::getOwnerPoller failed");
 }
 
 bool MediaSourceEventInterceptor::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) {
