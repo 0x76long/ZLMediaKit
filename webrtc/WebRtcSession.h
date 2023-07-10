@@ -35,6 +35,9 @@ public:
     void onManager() override;
     static EventPoller::Ptr queryPoller(const Buffer::Ptr &buffer);
 
+protected:
+    WebRtcTransportImp::Ptr _transport;
+
 private:
     //// HttpRequestSplitter override ////
     ssize_t onRecvHeader(const char *data, size_t len) override;
@@ -46,9 +49,7 @@ private:
     bool _over_tcp = false;
     bool _find_transport = true;
     Ticker _ticker;
-    struct sockaddr_storage _peer_addr;
     std::weak_ptr<toolkit::TcpServer> _server;
-    WebRtcTransportImp::Ptr _transport;
 };
 
 }// namespace mediakit

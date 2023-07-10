@@ -10,6 +10,7 @@
 
 #if defined(ENABLE_RTPPROXY)
 #include "RtpSender.h"
+#include "RtpSession.h"
 #include "Rtsp/RtspSession.h"
 #include "Thread/WorkThreadPool.h"
 #include "Util/uv_errno.h"
@@ -27,7 +28,11 @@ RtpSender::RtpSender(EventPoller::Ptr poller) {
 }
 
 RtpSender::~RtpSender() {
-    flush();
+    try {
+        flush();
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
 }
 
 void RtpSender::startSend(const MediaSourceEvent::SendRtpArgs &args, const function<void(uint16_t local_port, const SockException &ex)> &cb){
@@ -65,7 +70,8 @@ void RtpSender::startSend(const MediaSourceEvent::SendRtpArgs &args, const funct
                 is_wait = false;
             }
             // tcp服务器默认开启5秒
-            auto delay_task = _poller->doDelayTask(_args.tcp_passive_close_delay_ms, [tcp_listener, cb,is_wait]() mutable {
+            auto delay = _args.tcp_passive_close_delay_ms ? _args.tcp_passive_close_delay_ms : 5000;
+            auto delay_task = _poller->doDelayTask(delay, [tcp_listener, cb, is_wait]() mutable {
                 if (is_wait) {
                     cb(0, SockException(Err_timeout, "wait tcp connection timeout"));
                 }
@@ -213,6 +219,25 @@ void RtpSender::onConnect(){
     }
     //连接建立成功事件
     weak_ptr<RtpSender> weak_self = shared_from_this();
+    if (!_args.recv_stream_id.empty()) {
+        mINI ini;
+        ini[RtpSession::kStreamID] = _args.recv_stream_id;
+        _rtp_session = std::make_shared<RtpSession>(_socket_rtp);
+        _rtp_session->setParams(ini);
+
+        _socket_rtp->setOnRead([weak_self](const Buffer::Ptr &buf, struct sockaddr *addr, int addr_len) {
+            auto strong_self = weak_self.lock();
+            if (!strong_self) {
+                return;
+            }
+            try {
+                strong_self->_rtp_session->onRecv(buf);
+            } catch (std::exception &ex){
+                SockException err(toolkit::Err_shutdown, ex.what());
+                strong_self->_rtp_session->shutdown(err);
+            }
+        });
+    }
     _socket_rtp->setOnErr([weak_self](const SockException &err) {
         auto strong_self = weak_self.lock();
         if (strong_self) {
@@ -225,6 +250,10 @@ void RtpSender::onConnect(){
 }
 
 bool RtpSender::addTrack(const Track::Ptr &track){
+    if (_args.only_audio && track->getTrackType() == TrackVideo) {
+        // 如果只发送音频则忽略视频
+        return false;
+    }
     return _interface->addTrack(track);
 }
 
@@ -244,6 +273,10 @@ void RtpSender::flush() {
 
 //此函数在其他线程执行
 bool RtpSender::inputFrame(const Frame::Ptr &frame) {
+    if (_args.only_audio && frame->getTrackType() == TrackVideo) {
+        // 如果只发送音频则忽略视频
+        return false;
+    }
     //连接成功后才做实质操作(节省cpu资源)
     return _is_connect ? _interface->inputFrame(frame) : false;
 }
@@ -307,7 +340,7 @@ void RtpSender::onFlushRtpList(shared_ptr<List<Buffer::Ptr> > rtp_list) {
 
 void RtpSender::onErr(const SockException &ex) {
     _is_connect = false;
-    WarnL << "send rtp connection lost: " << ex.what();
+    WarnL << "send rtp connection lost: " << ex;
     onClose(ex);
 }
 

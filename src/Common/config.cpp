@@ -9,6 +9,7 @@
  */
 
 #include "Common/config.h"
+#include "MediaSource.h"
 #include "Util/NoticeCenter.h"
 #include "Util/logger.h"
 #include "Util/onceToken.h"
@@ -98,9 +99,11 @@ namespace Protocol {
 const string kModifyStamp = PROTOCOL_FIELD "modify_stamp";
 const string kEnableAudio = PROTOCOL_FIELD "enable_audio";
 const string kAddMuteAudio = PROTOCOL_FIELD "add_mute_audio";
+const string kAutoClose = PROTOCOL_FIELD "auto_close";
 const string kContinuePushMS = PROTOCOL_FIELD "continue_push_ms";
 
 const string kEnableHls = PROTOCOL_FIELD "enable_hls";
+const string kEnableHlsFmp4 = PROTOCOL_FIELD "enable_hls_fmp4";
 const string kEnableMP4 = PROTOCOL_FIELD "enable_mp4";
 const string kEnableRtsp = PROTOCOL_FIELD "enable_rtsp";
 const string kEnableRtmp = PROTOCOL_FIELD "enable_rtmp";
@@ -120,12 +123,14 @@ const string kTSDemand = PROTOCOL_FIELD "ts_demand";
 const string kFMP4Demand = PROTOCOL_FIELD "fmp4_demand";
 
 static onceToken token([]() {
-    mINI::Instance()[kModifyStamp] = 0;
+    mINI::Instance()[kModifyStamp] = (int)ProtocolOption::kModifyStampRelative;
     mINI::Instance()[kEnableAudio] = 1;
     mINI::Instance()[kAddMuteAudio] = 1;
     mINI::Instance()[kContinuePushMS] = 15000;
+    mINI::Instance()[kAutoClose] = 0;
 
     mINI::Instance()[kEnableHls] = 1;
+    mINI::Instance()[kEnableHlsFmp4] = 0;
     mINI::Instance()[kEnableMP4] = 0;
     mINI::Instance()[kEnableRtsp] = 1;
     mINI::Instance()[kEnableRtmp] = 1;
@@ -159,6 +164,7 @@ const string kNotFound = HTTP_FIELD "notFound";
 const string kDirMenu = HTTP_FIELD "dirMenu";
 const string kForbidCacheSuffix = HTTP_FIELD "forbidCacheSuffix";
 const string kForwardedIpHeader = HTTP_FIELD "forwarded_ip_header";
+const string kAllowCrossDomains = HTTP_FIELD "allow_cross_domains";
 
 static onceToken token([]() {
     mINI::Instance()[kSendBufSize] = 64 * 1024;
@@ -186,6 +192,7 @@ static onceToken token([]() {
                                              << endl;
     mINI::Instance()[kForbidCacheSuffix] = "";
     mINI::Instance()[kForwardedIpHeader] = "";
+    mINI::Instance()[kAllowCrossDomains] = 1;
 });
 
 } // namespace Http
@@ -206,6 +213,7 @@ const string kHandshakeSecond = RTSP_FIELD "handshakeSecond";
 const string kKeepAliveSecond = RTSP_FIELD "keepAliveSecond";
 const string kDirectProxy = RTSP_FIELD "directProxy";
 const string kLowLatency = RTSP_FIELD"lowLatency";
+const string kRtpTransportType = RTSP_FIELD"rtpTransportType";
 
 static onceToken token([]() {
     // 默认Md5方式认证
@@ -214,6 +222,7 @@ static onceToken token([]() {
     mINI::Instance()[kKeepAliveSecond] = 15;
     mINI::Instance()[kDirectProxy] = 1;
     mINI::Instance()[kLowLatency] = 0;
+    mINI::Instance()[kRtpTransportType] = -1;
 });
 } // namespace Rtsp
 
@@ -239,15 +248,15 @@ const string kVideoMtuSize = RTP_FIELD "videoMtuSize";
 const string kAudioMtuSize = RTP_FIELD "audioMtuSize";
 // rtp包最大长度限制，单位是KB
 const string kRtpMaxSize = RTP_FIELD "rtpMaxSize";
-
 const string kLowLatency = RTP_FIELD "lowLatency";
+const string kH264StapA = RTP_FIELD "h264_stap_a";
 
 static onceToken token([]() {
     mINI::Instance()[kVideoMtuSize] = 1400;
     mINI::Instance()[kAudioMtuSize] = 600;
     mINI::Instance()[kRtpMaxSize] = 10;
     mINI::Instance()[kLowLatency] = 0;
-
+    mINI::Instance()[kH264StapA] = 1;
 });
 } // namespace Rtp
 
@@ -317,10 +326,8 @@ const string kPortRange = RTP_PROXY_FIELD "port_range";
 const string kH264PT = RTP_PROXY_FIELD "h264_pt";
 const string kH265PT = RTP_PROXY_FIELD "h265_pt";
 const string kPSPT = RTP_PROXY_FIELD "ps_pt";
-const string kTSPT = RTP_PROXY_FIELD "ts_pt";
 const string kOpusPT = RTP_PROXY_FIELD "opus_pt";
-const string kG711UPT = RTP_PROXY_FIELD "g711u_pt";
-const string kG711APT = RTP_PROXY_FIELD "g711a_pt";
+const string kGopCache = RTP_PROXY_FIELD "gop_cache";
 
 static onceToken token([]() {
     mINI::Instance()[kDumpDir] = "";
@@ -329,10 +336,8 @@ static onceToken token([]() {
     mINI::Instance()[kH264PT] = 98;
     mINI::Instance()[kH265PT] = 99;
     mINI::Instance()[kPSPT] = 96;
-    mINI::Instance()[kTSPT] = 33;
     mINI::Instance()[kOpusPT] = 100;
-    mINI::Instance()[kG711UPT] = 0;
-    mINI::Instance()[kG711APT] = 8;
+    mINI::Instance()[kGopCache] = 1;
 });
 } // namespace RtpProxy
 

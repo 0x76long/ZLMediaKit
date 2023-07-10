@@ -47,10 +47,8 @@ public:
     using Ptr = std::shared_ptr<DevChannel>;
 
     //fDuration<=0为直播，否则为点播
-    DevChannel(
-        const std::string &vhost, const std::string &app, const std::string &stream_id, float duration = 0,
-        const ProtocolOption &option = ProtocolOption())
-        : MultiMediaSourceMuxer(vhost, app, stream_id, duration, option) {}
+    DevChannel(const MediaTuple& tuple, float duration = 0, const ProtocolOption &option = ProtocolOption())
+        : MultiMediaSourceMuxer(tuple, duration, option) {}
     ~DevChannel() override = default;
 
     /**
@@ -117,6 +115,11 @@ public:
      * @param cts 采集时间戳，单位毫秒
      */
     bool inputPCM(char *data, int len, uint64_t cts);
+
+    //// 重载基类方法，确保线程安全 ////
+    bool inputFrame(const Frame::Ptr &frame) override;
+    bool addTrack(const Track::Ptr & track) override;
+    void addTrackCompleted() override;
 
 private:
     MediaOriginType getOriginType(MediaSource &sender) const override;

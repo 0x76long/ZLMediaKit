@@ -15,6 +15,7 @@
 #include <mutex>
 #include <functional>
 #include "Util/List.h"
+#include "Util/TimeTicker.h"
 #include "Network/Buffer.h"
 
 namespace mediakit {
@@ -39,7 +40,7 @@ typedef enum {
     XX(CodecVP8,   TrackVideo, 7, "VP8", PSI_STREAM_VP8)            \
     XX(CodecVP9,   TrackVideo, 8, "VP9", PSI_STREAM_VP9)            \
     XX(CodecAV1,   TrackVideo, 9, "AV1", PSI_STREAM_AV1)            \
-    XX(CodecJPEG,  TrackVideo, 10, "JPEG", PSI_STREAM_JPEG_2000)
+    XX(CodecJPEG,  TrackVideo, 10, "JPEG", PSI_STREAM_RESERVED)
 
 typedef enum {
     CodecInvalid = -1,
@@ -292,7 +293,7 @@ public:
      * 添加代理
      */
     FrameWriterInterface* addDelegate(FrameWriterInterface::Ptr delegate) {
-        std::lock_guard<std::mutex> lck(_mtx);
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
         return _delegates.emplace(delegate.get(), std::move(delegate)).first->second.get();
     }
 
@@ -302,7 +303,7 @@ public:
      * 删除代理
      */
     void delDelegate(FrameWriterInterface *ptr) {
-        std::lock_guard<std::mutex> lck(_mtx);
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
         _delegates.erase(ptr);
     }
 
@@ -310,7 +311,8 @@ public:
      * 写入帧并派发
      */
     bool inputFrame(const Frame::Ptr &frame) override {
-        std::lock_guard<std::mutex> lck(_mtx);
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        doStatistics(frame);
         bool ret = false;
         for (auto &pr : _delegates) {
             if (pr.second->inputFrame(frame)) {
@@ -324,17 +326,65 @@ public:
      * 返回代理个数
      */
     size_t size() const {
-        std::lock_guard<std::mutex> lck(_mtx);
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
         return _delegates.size();
     }
 
     void clear() {
-        std::lock_guard<std::mutex> lck(_mtx);
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
         _delegates.clear();
     }
 
+    /**
+     * 获取累计关键帧数
+     */
+    uint64_t getVideoKeyFrames() const {
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        return _video_key_frames;
+    }
+
+    /**
+     *  获取帧数
+     */
+    uint64_t getFrames() const {
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        return _frames;
+    }
+
+    size_t getVideoGopSize() const {
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        return _gop_size;
+    }
+
+    size_t getVideoGopInterval() const {
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        return _gop_interval_ms;
+    }
+
 private:
-    mutable std::mutex _mtx;
+    void doStatistics(const Frame::Ptr &frame) {
+        if (!frame->configFrame() && !frame->dropAble()) {
+            // 忽略配置帧与可丢弃的帧
+            ++_frames;
+            if (frame->keyFrame() && frame->getTrackType() == TrackVideo) {
+                // 遇视频关键帧时统计
+                ++_video_key_frames;
+                _gop_size = _frames - _last_frames;
+                _gop_interval_ms = _ticker.elapsedTime();
+                _last_frames = _frames;
+                _ticker.resetTime();
+            }
+        }
+    }
+
+private:
+    toolkit::Ticker _ticker;
+    size_t _gop_interval_ms = 0;
+    size_t _gop_size = 0;
+    uint64_t _last_frames = 0;
+    uint64_t _frames = 0;
+    uint64_t _video_key_frames = 0;
+    mutable std::recursive_mutex _mtx;
     std::map<void *, FrameWriterInterface::Ptr> _delegates;
 };
 
@@ -442,7 +492,7 @@ private:
 class FrameStamp : public Frame {
 public:
     using Ptr = std::shared_ptr<FrameStamp>;
-    FrameStamp(Frame::Ptr frame, Stamp &stamp, bool modify_stamp);
+    FrameStamp(Frame::Ptr frame, Stamp &stamp, int modify_stamp);
     ~FrameStamp() override {}
 
     uint64_t dts() const override { return (uint64_t)_dts; }

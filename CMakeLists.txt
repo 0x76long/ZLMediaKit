@@ -41,6 +41,7 @@ option(ENABLE_HLS "Enable HLS" ON)
 option(ENABLE_JEMALLOC_STATIC "Enable static linking to the jemalloc library" OFF)
 option(ENABLE_MEM_DEBUG "Enable Memory Debug" OFF)
 option(ENABLE_MP4 "Enable MP4" ON)
+option(ENABLE_HLS_FMP4 "Enable HLS-FMP4" ON)
 option(ENABLE_MSVC_MT "Enable MSVC Mt/Mtd lib" ON)
 option(ENABLE_MYSQL "Enable MySQL" OFF)
 option(ENABLE_OPENSSL "Enable OpenSSL" ON)
@@ -50,10 +51,11 @@ option(ENABLE_SERVER "Enable Server" ON)
 option(ENABLE_SERVER_LIB "Enable server as android static library" OFF)
 option(ENABLE_SRT "Enable SRT" ON)
 option(ENABLE_TESTS "Enable Tests" ON)
+option(ENABLE_SCTP "Enable SCTP" ON)
 option(ENABLE_WEBRTC "Enable WebRTC" ON)
 option(ENABLE_X264 "Enable x264" OFF)
 option(ENABLE_WEPOLL "Enable wepoll" ON)
-
+option(DISABLE_REPORT "Disable report to report.zlmediakit.com" off)
 option(USE_SOLUTION_FOLDERS "Enable solution dir supported" ON)
 
 ##############################################################################
@@ -201,6 +203,10 @@ endif()
 # mediakit 以及各个 runtime 依赖
 update_cached_list(MK_LINK_LIBRARIES "")
 update_cached_list(MK_COMPILE_DEFINITIONS ENABLE_VERSION)
+
+if (DISABLE_REPORT)
+  update_cached_list(MK_COMPILE_DEFINITIONS DISABLE_REPORT)
+endif ()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
   include(CheckCXXSourceCompiles)
@@ -444,11 +450,6 @@ if(ENABLE_API)
   add_subdirectory(api)
 endif()
 
-# IOS 不编译可执行程序
-if(IOS)
-  return()
-endif()
-
 ##############################################################################
 
 if(ENABLE_PLAYER AND ENABLE_FFMPEG)
@@ -456,11 +457,18 @@ if(ENABLE_PLAYER AND ENABLE_FFMPEG)
 endif()
 
 #MediaServer主程序
-add_subdirectory(server)
+if(ENABLE_SERVER)
+  add_subdirectory(server)
+endif()
 
 # Android 会 add_subdirectory 并依赖该变量
 if(ENABLE_SERVER_LIB)
   set(MK_LINK_LIBRARIES ${MK_LINK_LIBRARIES} PARENT_SCOPE)
+endif()
+
+# IOS 不编译可执行程序
+if(IOS)
+  return()
 endif()
 
 #cpp测试demo程序

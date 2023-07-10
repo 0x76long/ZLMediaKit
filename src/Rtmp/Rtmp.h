@@ -113,6 +113,8 @@ public:
 
 class FLVHeader {
 public:
+    static constexpr uint8_t kFlvVersion = 1;
+    static constexpr uint8_t kFlvHeaderLength = 9;
     //FLV
     char flv[3];
     //File version (for example, 0x01 for FLV version 1)
@@ -138,6 +140,8 @@ public:
 #endif
     //The length of this header in bytes,固定为9
     uint32_t length;
+    //固定为0
+    uint32_t previous_tag_size0;
 } PACKED;
 
 class RtmpTagHeader {
@@ -207,8 +211,8 @@ class Metadata : public CodecInfo{
 public:
     using Ptr = std::shared_ptr<Metadata>;
 
-    Metadata():_metadata(AMF_OBJECT){}
-    virtual ~Metadata(){}
+    Metadata(): _metadata(AMF_OBJECT) {}
+    virtual ~Metadata() = default;
     const AMFValue &getMetadata() const{
         return _metadata;
     }
@@ -239,7 +243,7 @@ public:
     using Ptr = std::shared_ptr<VideoMeta>;
 
     VideoMeta(const VideoTrack::Ptr &video);
-    virtual ~VideoMeta(){}
+    virtual ~VideoMeta() = default;
 
     CodecId getCodecId() const override{
         return _codecId;
@@ -253,8 +257,7 @@ public:
     using Ptr = std::shared_ptr<AudioMeta>;
 
     AudioMeta(const AudioTrack::Ptr &audio);
-
-    virtual ~AudioMeta(){}
+    virtual ~AudioMeta() = default;
 
     CodecId getCodecId() const override{
         return _codecId;

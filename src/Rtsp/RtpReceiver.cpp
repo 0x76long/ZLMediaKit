@@ -14,7 +14,7 @@
 namespace mediakit {
 
 RtpTrack::RtpTrack() {
-    setOnSort([this](uint16_t seq, RtpPacket::Ptr &packet) {
+    setOnSort([this](uint16_t seq, RtpPacket::Ptr packet) {
         onRtpSorted(std::move(packet));
     });
 }
@@ -71,7 +71,7 @@ RtpPacket::Ptr RtpTrack::inputRtp(TrackType type, int sample_rate, uint8_t *ptr,
     } else {
         //ssrc错误
         if (_ssrc_alive.elapsedTime() < 3 * 1000) {
-            //接受正确ssrc的rtp在10秒内，那么我们认为存在多路rtp,忽略掉ssrc不匹配的rtp
+            //接收正确ssrc的rtp在10秒内，那么我们认为存在多路rtp,忽略掉ssrc不匹配的rtp
             WarnL << "ssrc mismatch, rtp dropped:" << ssrc << " != " << _ssrc;
             return nullptr;
         }
@@ -114,7 +114,7 @@ void RtpTrack::setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms) {
     }
 }
 
-void RtpTrack::setPT(uint8_t pt){
+void RtpTrack::setPayloadType(uint8_t pt) {
     _pt = pt;
 }
 

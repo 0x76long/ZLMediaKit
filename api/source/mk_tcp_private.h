@@ -21,11 +21,11 @@ public:
     TcpClientForC(mk_tcp_client_events *events) ;
     ~TcpClientForC() override ;
     void onRecv(const toolkit::Buffer::Ptr &pBuf) override;
-    void onErr(const toolkit::SockException &ex) override;
+    void onError(const toolkit::SockException &ex) override;
     void onManager() override;
     void onConnect(const toolkit::SockException &ex) override;
     void setClient(mk_tcp_client client);
-    void *_user_data;
+    std::shared_ptr<void> _user_data;
 private:
     mk_tcp_client_events _events;
     mk_tcp_client _client;
@@ -38,7 +38,7 @@ public:
     void onRecv(const toolkit::Buffer::Ptr &buffer) override ;
     void onError(const toolkit::SockException &err) override;
     void onManager() override;
-    void *_user_data;
+    std::shared_ptr<void> _user_data;
     uint16_t _local_port;
 };
 

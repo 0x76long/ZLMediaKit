@@ -12,13 +12,14 @@
 #define MK_EVENT_OBJECTS_H
 #include "mk_common.h"
 #include "mk_tcp.h"
+#include "mk_track.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 ///////////////////////////////////////////MP4Info/////////////////////////////////////////////
 //MP4Info对象的C映射
-typedef void* mk_mp4_info;
+typedef struct mk_mp4_info_t *mk_mp4_info;
 // GMT 标准时间，单位秒
 API_EXPORT uint64_t API_CALL mk_mp4_info_get_start_time(const mk_mp4_info ctx);
 // 录像长度，单位秒
@@ -42,7 +43,7 @@ API_EXPORT const char* API_CALL mk_mp4_info_get_stream(const mk_mp4_info ctx);
 
 ///////////////////////////////////////////Parser/////////////////////////////////////////////
 //Parser对象的C映射
-typedef void* mk_parser;
+typedef struct mk_parser_t *mk_parser;
 //Parser::Method(),获取命令字，譬如GET/POST
 API_EXPORT const char* API_CALL mk_parser_get_method(const mk_parser ctx);
 //Parser::Url(),获取HTTP的访问url(不包括?后面的参数)
@@ -60,26 +61,26 @@ API_EXPORT const char* API_CALL mk_parser_get_content(const mk_parser ctx, size_
 
 ///////////////////////////////////////////MediaInfo/////////////////////////////////////////////
 //MediaInfo对象的C映射
-typedef void* mk_media_info;
-//MediaInfo::_param_strs
+typedef struct mk_media_info_t *mk_media_info;
+//MediaInfo::param_strs
 API_EXPORT const char* API_CALL mk_media_info_get_params(const mk_media_info ctx);
-//MediaInfo::_schema
+//MediaInfo::schema
 API_EXPORT const char* API_CALL mk_media_info_get_schema(const mk_media_info ctx);
-//MediaInfo::_vhost
+//MediaInfo::vhost
 API_EXPORT const char* API_CALL mk_media_info_get_vhost(const mk_media_info ctx);
-//MediaInfo::_app
+//MediaInfo::app
 API_EXPORT const char* API_CALL mk_media_info_get_app(const mk_media_info ctx);
-//MediaInfo::_streamid
+//MediaInfo::stream
 API_EXPORT const char* API_CALL mk_media_info_get_stream(const mk_media_info ctx);
-//MediaInfo::_host
+//MediaInfo::host
 API_EXPORT const char* API_CALL mk_media_info_get_host(const mk_media_info ctx);
-//MediaInfo::_port
+//MediaInfo::port
 API_EXPORT uint16_t API_CALL mk_media_info_get_port(const mk_media_info ctx);
 
 
 ///////////////////////////////////////////MediaSource/////////////////////////////////////////////
 //MediaSource对象的C映射
-typedef void* mk_media_source;
+typedef struct mk_media_source_t *mk_media_source;
 //查找MediaSource的回调函数
 typedef void(API_CALL *on_mk_media_source_find_cb)(void *user_data, const mk_media_source ctx);
 
@@ -95,6 +96,10 @@ API_EXPORT const char* API_CALL mk_media_source_get_stream(const mk_media_source
 API_EXPORT int API_CALL mk_media_source_get_reader_count(const mk_media_source ctx);
 //MediaSource::totalReaderCount()
 API_EXPORT int API_CALL mk_media_source_get_total_reader_count(const mk_media_source ctx);
+// get track count from MediaSource
+API_EXPORT int API_CALL mk_media_source_get_track_count(const mk_media_source ctx);
+// copy track reference by index from MediaSource, please use mk_track_unref to release it
+API_EXPORT mk_track API_CALL mk_media_source_get_track(const mk_media_source ctx, int index);
 /**
  * 直播源在ZLMediaKit中被称作为MediaSource，
  * 目前支持3种，分别是RtmpMediaSource、RtspMediaSource、HlsMediaSource
@@ -120,6 +125,7 @@ typedef void(API_CALL *on_mk_media_source_send_rtp_result)(void *user_data, uint
 
 //MediaSource::startSendRtp,请参考mk_media_start_send_rtp,注意ctx参数类型不一样
 API_EXPORT void API_CALL mk_media_source_start_send_rtp(const mk_media_source ctx, const char *dst_url, uint16_t dst_port, const char *ssrc, int is_udp, on_mk_media_source_send_rtp_result cb, void *user_data);
+API_EXPORT void API_CALL mk_media_source_start_send_rtp2(const mk_media_source ctx, const char *dst_url, uint16_t dst_port, const char *ssrc, int is_udp, on_mk_media_source_send_rtp_result cb, void *user_data, on_user_data_free user_data_free);
 //MediaSource::stopSendRtp，请参考mk_media_stop_send_rtp,注意ctx参数类型不一样
 API_EXPORT int API_CALL mk_media_source_stop_send_rtp(const mk_media_source ctx);
 
@@ -131,19 +137,32 @@ API_EXPORT void API_CALL mk_media_source_find(const char *schema,
                                               int from_mp4,
                                               void *user_data,
                                               on_mk_media_source_find_cb cb);
+
+API_EXPORT const mk_media_source API_CALL mk_media_source_find2(const char *schema,
+                                                                const char *vhost,
+                                                                const char *app,
+                                                                const char *stream,
+                                                                int from_mp4);
 //MediaSource::for_each_media()
 API_EXPORT void API_CALL mk_media_source_for_each(void *user_data, on_mk_media_source_find_cb cb, const char *schema,
                                                   const char *vhost, const char *app, const char *stream);
 
 ///////////////////////////////////////////HttpBody/////////////////////////////////////////////
 //HttpBody对象的C映射
-typedef void* mk_http_body;
+typedef struct mk_http_body_t *mk_http_body;
 /**
  * 生成HttpStringBody
  * @param str 字符串指针
  * @param len 字符串长度，为0则用strlen获取
  */
 API_EXPORT mk_http_body API_CALL mk_http_body_from_string(const char *str,size_t len);
+
+/**
+ * 生成HttpBufferBody
+ * @param buffer mk_buffer对象
+ */
+API_EXPORT mk_http_body API_CALL mk_http_body_from_buffer(mk_buffer buffer);
+
 
 /**
  * 生成HttpFileBody
@@ -165,7 +184,7 @@ API_EXPORT void API_CALL mk_http_body_release(mk_http_body ctx);
 
 ///////////////////////////////////////////HttpResponseInvoker/////////////////////////////////////////////
 //HttpSession::HttpResponseInvoker对象的C映射
-typedef void* mk_http_response_invoker;
+typedef struct mk_http_response_invoker_t *mk_http_response_invoker;
 
 /**
  * HttpSession::HttpResponseInvoker(const string &codeOut, const StrCaseMap &headerOut, const HttpBody::Ptr &body);
@@ -211,7 +230,8 @@ API_EXPORT void API_CALL mk_http_response_invoker_clone_release(const mk_http_re
 
 ///////////////////////////////////////////HttpAccessPathInvoker/////////////////////////////////////////////
 //HttpSession::HttpAccessPathInvoker对象的C映射
-typedef void* mk_http_access_path_invoker;
+typedef struct mk_http_access_path_invoker_t *mk_http_access_path_invoker;
+
 /**
  * HttpSession::HttpAccessPathInvoker(const string &errMsg,const string &accessPath, int cookieLifeSecond);
  * @param err_msg 如果为空，则代表鉴权通过，否则为错误提示,可以为null
@@ -236,7 +256,7 @@ API_EXPORT void API_CALL mk_http_access_path_invoker_clone_release(const mk_http
 
 ///////////////////////////////////////////RtspSession::onGetRealm/////////////////////////////////////////////
 //RtspSession::onGetRealm对象的C映射
-typedef void* mk_rtsp_get_realm_invoker;
+typedef struct mk_rtsp_get_realm_invoker_t *mk_rtsp_get_realm_invoker;
 /**
  * 执行RtspSession::onGetRealm
  * @param realm 该rtsp流是否需要开启rtsp专属鉴权，至null或空字符串则不鉴权
@@ -257,7 +277,7 @@ API_EXPORT void API_CALL mk_rtsp_get_realm_invoker_clone_release(const mk_rtsp_g
 
 ///////////////////////////////////////////RtspSession::onAuth/////////////////////////////////////////////
 //RtspSession::onAuth对象的C映射
-typedef void* mk_rtsp_auth_invoker;
+typedef struct mk_rtsp_auth_invoker_t *mk_rtsp_auth_invoker;
 
 /**
  * 执行RtspSession::onAuth
@@ -281,7 +301,7 @@ API_EXPORT void API_CALL mk_rtsp_auth_invoker_clone_release(const mk_rtsp_auth_i
 
 ///////////////////////////////////////////Broadcast::PublishAuthInvoker/////////////////////////////////////////////
 //Broadcast::PublishAuthInvoker对象的C映射
-typedef void* mk_publish_auth_invoker;
+typedef struct mk_publish_auth_invoker_t *mk_publish_auth_invoker;
 
 /**
  * 执行Broadcast::PublishAuthInvoker
@@ -307,7 +327,7 @@ API_EXPORT void API_CALL mk_publish_auth_invoker_clone_release(const mk_publish_
 
 ///////////////////////////////////////////Broadcast::AuthInvoker/////////////////////////////////////////////
 //Broadcast::AuthInvoker对象的C映射
-typedef void* mk_auth_invoker;
+typedef struct mk_auth_invoker_t *mk_auth_invoker;
 
 /**
  * 执行Broadcast::AuthInvoker

@@ -9,6 +9,7 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 #include "mk_mediakit.h"
 
 typedef struct {
@@ -32,7 +33,7 @@ void release_player(mk_player *ptr) {
     }
 }
 
-void release_pusher(mk_media *ptr) {
+void release_pusher(mk_pusher *ptr) {
     if (ptr && *ptr) {
         mk_pusher_release(*ptr);
         *ptr = NULL;
