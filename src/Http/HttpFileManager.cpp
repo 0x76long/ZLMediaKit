@@ -50,6 +50,67 @@ const string &HttpFileManager::getContentType(const char *name) {
     return HttpConst::getHttpContentType(name);
 }
 
+#ifndef ntohll
+static uint64_t ntohll(uint64_t val) {
+    return (((uint64_t)ntohl(val)) << 32) + ntohl(val >> 32);
+}
+#endif
+
+static uint64_t get_ip_uint64(const std::string &ip) {
+    try {
+        auto storage = SockUtil::make_sockaddr(ip.data(), 0);
+        if (storage.ss_family == AF_INET) {
+            return ntohl(reinterpret_cast<uint32_t &>(reinterpret_cast<struct sockaddr_in &>(storage).sin_addr));
+        }
+        if (storage.ss_family == AF_INET6) {
+            return ntohll(reinterpret_cast<uint64_t &>(reinterpret_cast<struct sockaddr_in6 &>(storage).sin6_addr));
+        }
+    } catch (std::exception &ex) {
+        WarnL << ex.what();
+    }
+    return 0;
+}
+
+bool HttpFileManager::isIPAllowed(const std::string &ip) {
+    using IPRangs = std::vector<std::pair<uint64_t /*min_ip*/, uint64_t /*max_ip*/>>;
+    GET_CONFIG_FUNC(IPRangs, allow_ip_range, Http::kAllowIPRange, [](const string &str) -> IPRangs {
+        IPRangs ret;
+        auto vec = split(str, ",");
+        for (auto &item : vec) {
+            if (trim(item).empty()) {
+                continue;
+            }
+            auto range = split(item, "-");
+            if (range.size() == 2) {
+                auto ip_min = get_ip_uint64(trim(range[0]));
+                auto ip_max = get_ip_uint64(trim(range[1]));
+                if (ip_min && ip_max) {
+                    ret.emplace_back(ip_min, ip_max);
+                }
+            } else if (range.size() == 1) {
+                auto ip = get_ip_uint64(trim(range[0]));
+                if (ip) {
+                    ret.emplace_back(ip, ip);
+                }
+            } else {
+                WarnL << "Invalid ip range: " << item;
+            }
+        }
+        return ret;
+    });
+
+    if (allow_ip_range.empty()) {
+        return true;
+    }
+    auto ip_int = get_ip_uint64(ip);
+    for (auto &range : allow_ip_range) {
+        if (ip_int >= range.first && ip_int <= range.second) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static string searchIndexFile(const string &dir){
     DIR *pDir;
     dirent *pDirent;
@@ -58,7 +119,7 @@ static string searchIndexFile(const string &dir){
     }
     set<string> setFile;
     while ((pDirent = readdir(pDir)) != NULL) {
-        static set<const char *, StrCaseCompare> indexSet = {"index.html", "index.htm", "index"};
+        static set<const char *, StrCaseCompare> indexSet = {"index.html", "index.htm"};
         if (indexSet.find(pDirent->d_name) != indexSet.end()) {
             string ret = pDirent->d_name;
             closedir(pDir);
@@ -189,7 +250,7 @@ static bool emitHlsPlayed(const Parser &parser, const MediaInfo &media_info, con
         //cookie有效期为kHlsCookieSecond
         invoker(err, "", kHlsCookieSecond);
     };
-    bool flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPlayed, media_info, auth_invoker, static_cast<SockInfo &>(sender));
+    bool flag = NOTICE_EMIT(BroadcastMediaPlayedArgs, Broadcast::kBroadcastMediaPlayed, media_info, auth_invoker, sender);
     if (!flag) {
         //未开启鉴权，那么允许播放
         auth_invoker("");
@@ -321,10 +382,10 @@ static void canAccessPath(Session &sender, const Parser &parser, const MediaInfo
         return;
     }
 
-    //事件未被拦截，则认为是http下载请求
-    bool flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastHttpAccess, parser, path, is_dir, accessPathInvoker, static_cast<SockInfo &>(sender));
+    // 事件未被拦截，则认为是http下载请求
+    bool flag = NOTICE_EMIT(BroadcastHttpAccessArgs, Broadcast::kBroadcastHttpAccess, parser, path, is_dir, accessPathInvoker, sender);
     if (!flag) {
-        //此事件无人监听，我们默认都有权限访问
+        // 此事件无人监听，我们默认都有权限访问
         callback("", nullptr);
     }
 }
@@ -463,7 +524,7 @@ static void accessFile(Session &sender, const Parser &parser, const MediaInfo &m
     });
 }
 
-static string getFilePath(const Parser &parser,const MediaInfo &media_info, Session &sender){
+static string getFilePath(const Parser &parser,const MediaInfo &media_info, Session &sender) {
     GET_CONFIG(bool, enableVhost, General::kEnableVhost);
     GET_CONFIG(string, rootPath, Http::kRootPath);
     GET_CONFIG_FUNC(StrCaseMap, virtualPathMap, Http::kVirtualPath, [](const string &str) {
@@ -488,7 +549,14 @@ static string getFilePath(const Parser &parser,const MediaInfo &media_info, Sess
         }
     }
     auto ret = File::absolutePath(enableVhost ? media_info.vhost + url : url, path);
-    NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastHttpBeforeAccess, parser, ret, static_cast<SockInfo &>(sender));
+    auto http_root = File::absolutePath(enableVhost ? media_info.vhost + "/" : "/", path);
+    if (!start_with(ret, http_root)) {
+        // 访问的http文件不得在http根目录之外
+        throw std::runtime_error("Attempting to access files outside of the http root directory");
+    }
+    // 替换url，防止返回的目录索引网页被注入非法内容
+    const_cast<Parser&>(parser).setUrl("/" + ret.substr(http_root.size()));
+    NOTICE_EMIT(BroadcastHttpBeforeAccessArgs, Broadcast::kBroadcastHttpBeforeAccess, parser, ret, sender);
     return ret;
 }
 
@@ -510,11 +578,14 @@ void HttpFileManager::onAccessPath(Session &sender, Parser &parser, const HttpFi
     if (File::is_dir(file_path.data())) {
         auto indexFile = searchIndexFile(file_path);
         if (!indexFile.empty()) {
-            //发现该文件夹下有index文件
+            // 发现该文件夹下有index文件
             file_path = pathCat(file_path, indexFile);
-            parser.setUrl(pathCat(parser.url(), indexFile));
-            accessFile(sender, parser, media_info, file_path, cb);
-            return;
+            if (!File::is_dir(file_path.data())) {
+                // 不是文件夹
+                parser.setUrl(pathCat(parser.url(), indexFile));
+                accessFile(sender, parser, media_info, file_path, cb);
+                return;
+            }
         }
         string strMenu;
         //生成文件夹菜单索引
