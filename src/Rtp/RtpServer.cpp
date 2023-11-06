@@ -89,6 +89,8 @@ public:
             for (auto &rtcp : rtcps) {
                 strong_self->_process->onRtcp(rtcp);
             }
+            // 收到sr rtcp后驱动返回rr rtcp
+            strong_self->sendRtcp(strong_self->_ssrc, (struct sockaddr *)(strong_self->_rtcp_addr.get()));
         });
 
         GET_CONFIG(uint64_t, timeoutSec, RtpProxy::kTimeoutSec);
@@ -102,7 +104,7 @@ public:
                     process->setOnDetach(std::move(strong_self->_on_detach));
                 }
                 if (!process) { // process 未创建，触发rtp server 超时事件
-                    NOTICE_EMIT(BroadcastRtpServerTimeoutArgs, Broadcast::KBroadcastRtpServerTimeout, strong_self->_local_port, strong_self->_stream_id,
+                    NOTICE_EMIT(BroadcastRtpServerTimeoutArgs, Broadcast::kBroadcastRtpServerTimeout, strong_self->_local_port, strong_self->_stream_id,
                                 (int)strong_self->_tcp_mode, strong_self->_re_use_port, strong_self->_ssrc);
                 }
             }
