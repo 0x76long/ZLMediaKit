@@ -155,6 +155,7 @@ protected:
      * @param frame
      */
     bool onTrackFrame(const Frame::Ptr &frame) override;
+    bool onTrackFrame_l(const Frame::Ptr &frame);
 
 private:
     void createGopCacheIfNeed();
@@ -163,12 +164,13 @@ private:
     bool _is_enable = false;
     bool _create_in_poller = false;
     bool _video_key_pos = false;
+    std::shared_ptr<class FramePacedSender> _paced_sender;
     MediaTuple _tuple;
     ProtocolOption _option;
     toolkit::Ticker _last_check;
     Stamp _stamp[2];
     std::weak_ptr<Listener> _track_listener;
-    std::unordered_map<std::string, RingType::RingReader::Ptr> _rtp_sender;
+    std::unordered_multimap<std::string, RingType::RingReader::Ptr> _rtp_sender;
     FMP4MediaSourceMuxer::Ptr _fmp4;
     RtmpMediaSourceMuxer::Ptr _rtmp;
     RtspMediaSourceMuxer::Ptr _rtsp;

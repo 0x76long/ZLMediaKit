@@ -131,7 +131,9 @@ void RtspSession::onWholeRtspPacket(Parser &parser) {
     string method = parser.method(); //提取出请求命令字
     _cseq = atoi(parser["CSeq"].data());
     if (_content_base.empty() && method != "GET") {
-        _content_base = parser.url();
+        RtspUrl rtsp;
+        rtsp.parse(parser.url());
+        _content_base = rtsp._url;
         _media_info.parse(parser.fullUrl());
         _media_info.schema = RTSP_SCHEMA;
     }
@@ -1193,6 +1195,10 @@ void RtspSession::updateRtcpContext(const RtpPacket::Ptr &rtp){
     int track_index = getTrackIndexByTrackType(rtp->type);
     auto &rtcp_ctx = _rtcp_context[track_index];
     rtcp_ctx->onRtp(rtp->getSeq(), rtp->getStamp(), rtp->ntp_stamp, rtp->sample_rate, rtp->size() - RtpPacket::kRtpTcpHeaderSize);
+    if (!rtp->ntp_stamp && !rtp->getStamp()) {
+        // 忽略时间戳都为0的rtp
+        return;
+    }
 
     auto &ticker = _rtcp_send_tickers[track_index];
     //send rtcp every 5 second

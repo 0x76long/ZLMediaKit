@@ -196,6 +196,9 @@ extern const std::string kAddMuteAudio;
 extern const std::string kAutoClose;
 //断连续推延时，单位毫秒，默认采用配置文件
 extern const std::string kContinuePushMS;
+// 平滑发送定时器间隔，单位毫秒，置0则关闭；开启后影响cpu性能同时增加内存
+// 该配置开启后可以解决一些流发送不平滑导致zlmediakit转发也不平滑的问题
+extern const std::string kPacedSenderMS;
 
 //是否开启转换为hls(mpegts)
 extern const std::string kEnableHls;
@@ -350,6 +353,8 @@ extern const std::string kFileBufSize;
 extern const std::string kBroadcastRecordTs;
 // hls直播文件删除延时，单位秒
 extern const std::string kDeleteDelaySec;
+// 如果设置为1，则第一个切片长度强制设置为1个GOP
+extern const std::string kFastRegister;
 } // namespace Hls
 
 ////////////Rtp代理相关配置///////////
@@ -403,6 +408,8 @@ extern const std::string kWaitTrackReady;
 // rtsp播放指定track，可选项有0(不指定，默认)、1(视频)、2(音频)
 // 设置方法:player[Client::kPlayTrack] = 0/1/2;
 extern const std::string kPlayTrack;
+//设置代理url，目前只支持http协议
+extern const std::string kProxyUrl;
 } // namespace Client
 } // namespace mediakit
 

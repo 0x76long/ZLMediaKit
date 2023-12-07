@@ -301,7 +301,7 @@ static void pullStreamFromOrigin(const vector<string> &urls, size_t index, size_
     option.enable_hls = option.enable_hls || (args.schema == HLS_SCHEMA);
     option.enable_mp4 = false;
 
-    addStreamProxy(args.vhost, args.app, args.stream, url, retry_count, option, Rtsp::RTP_TCP, timeout_sec, [=](const SockException &ex, const string &key) mutable {
+    addStreamProxy(args.vhost, args.app, args.stream, url, retry_count, option, Rtsp::RTP_TCP, timeout_sec, mINI{}, [=](const SockException &ex, const string &key) mutable {
         if (!ex) {
             return;
         }
@@ -577,8 +577,8 @@ void installWebHook() {
     });
 
     NoticeCenter::Instance().addListener(&web_hook_tag, Broadcast::kBroadcastStreamNoneReader, [](BroadcastStreamNoneReaderArgs) {
-        if (!origin_urls.empty()) {
-            // 边沿站无人观看时立即停止溯源
+        if (!origin_urls.empty() && sender.getOriginType() == MediaOriginType::pull) {
+            // 边沿站无人观看时如果是拉流的则立即停止溯源
             sender.close(false);
             WarnL << "无人观看主动关闭流:" << sender.getOriginUrl();
             return;

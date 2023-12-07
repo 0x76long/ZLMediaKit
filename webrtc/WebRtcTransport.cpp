@@ -90,7 +90,7 @@ const char* sockTypeStr(Session* session) {
 
 WebRtcTransport::WebRtcTransport(const EventPoller::Ptr &poller) {
     _poller = poller;
-    _identifier = "zlm_" + to_string(++s_key);
+    _identifier = "zlm" + to_string(++s_key);
     _packet_pool.setSize(64);
 }
 
@@ -1258,7 +1258,7 @@ void play_plugin(Session &sender, const WebRtcArgs &args, const WebRtcPluginMana
                 return;
             }
             // 还原成rtc，目的是为了hook时识别哪种播放协议
-            info.schema = RTC_SCHEMA;
+            info.schema = "rtc";
             auto rtc = WebRtcPlayer::create(EventPollerPool::Instance().getPoller(), src, info, preferred_tcp);
             cb(*rtc);
         });

@@ -104,6 +104,8 @@ public:
         bool passive = false;
         // rtp payload type
         uint8_t pt = 96;
+        //是否支持同ssrc多服务器发送
+        bool ssrc_multi_send = false;
         // 指定rtp ssrc
         std::string ssrc;
         // 指定本地发送端口
@@ -159,6 +161,10 @@ public:
     //断连续推延时，单位毫秒，默认采用配置文件
     uint32_t continue_push_ms;
 
+    // 平滑发送定时器间隔，单位毫秒，置0则关闭；开启后影响cpu性能同时增加内存
+    // 该配置开启后可以解决一些流发送不平滑导致zlmediakit转发也不平滑的问题
+    uint32_t paced_sender_ms;
+
     //是否开启转换为hls(mpegts)
     bool enable_hls;
     //是否开启转换为hls(fmp4)
@@ -200,12 +206,18 @@ public:
 
     template <typename MAP>
     ProtocolOption(const MAP &allArgs) : ProtocolOption() {
+        load(allArgs);
+    }
+
+    template <typename MAP>
+    void load(const MAP &allArgs) {
 #define GET_OPT_VALUE(key) getArgsValue(allArgs, #key, key)
         GET_OPT_VALUE(modify_stamp);
         GET_OPT_VALUE(enable_audio);
         GET_OPT_VALUE(add_mute_audio);
         GET_OPT_VALUE(auto_close);
         GET_OPT_VALUE(continue_push_ms);
+        GET_OPT_VALUE(paced_sender_ms);
 
         GET_OPT_VALUE(enable_hls);
         GET_OPT_VALUE(enable_hls_fmp4);

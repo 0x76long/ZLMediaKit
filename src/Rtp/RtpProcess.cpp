@@ -33,7 +33,7 @@ RtpProcess::RtpProcess(const string &stream_id) {
 
     GET_CONFIG(string, dump_dir, RtpProxy::kDumpDir);
     {
-        FILE *fp = !dump_dir.empty() ? File::create_file(File::absolutePath(_media_info.stream + ".rtp", dump_dir).data(), "wb") : nullptr;
+        FILE *fp = !dump_dir.empty() ? File::create_file(File::absolutePath(_media_info.stream + ".rtp", dump_dir), "wb") : nullptr;
         if (fp) {
             _save_file_rtp.reset(fp, [](FILE *fp) {
                 fclose(fp);
@@ -42,7 +42,7 @@ RtpProcess::RtpProcess(const string &stream_id) {
     }
 
     {
-        FILE *fp = !dump_dir.empty() ? File::create_file(File::absolutePath(_media_info.stream + ".video", dump_dir).data(), "wb") : nullptr;
+        FILE *fp = !dump_dir.empty() ? File::create_file(File::absolutePath(_media_info.stream + ".video", dump_dir), "wb") : nullptr;
         if (fp) {
             _save_file_video.reset(fp, [](FILE *fp) {
                 fclose(fp);
@@ -78,6 +78,9 @@ bool RtpProcess::inputRtp(bool is_udp, const Socket::Ptr &sock, const char *data
     if (!isRtp(data, len)) {
         WarnP(this) << "Not rtp packet";
         return false;
+    }
+    if (!_auth_err.empty()) {
+        throw toolkit::SockException(toolkit::Err_other, _auth_err);
     }
     if (_sock != sock) {
         // 第一次运行本函数
@@ -260,6 +263,7 @@ void RtpProcess::emitOnPublish() {
                 strong_self->doCachedFunc();
                 InfoP(strong_self) << "允许RTP推流";
             } else {
+                strong_self->_auth_err = err;
                 WarnP(strong_self) << "禁止RTP推流:" << err;
             }
         });
