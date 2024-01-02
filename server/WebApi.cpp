@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -555,6 +555,9 @@ void addStreamProxy(const string &vhost, const string &app, const string &stream
     auto player = std::make_shared<PlayerProxy>(vhost, app, stream, option, retry_count);
     s_proxyMap[key] = player;
 
+    // 先透传参数
+    player->mINI::operator=(args);
+
     //指定RTP over TCP(播放rtsp时有效)
     (*player)[Client::kRtpType] = rtp_type;
 
@@ -577,7 +580,6 @@ void addStreamProxy(const string &vhost, const string &app, const string &stream
         lock_guard<recursive_mutex> lck(s_proxyMapMtx);
         s_proxyMap.erase(key);
     });
-    player->mINI::operator=(args);
     player->play(url);
 };
 
@@ -942,25 +944,29 @@ void installWebApi() {
 
     //批量断开tcp连接，比如说可以断开rtsp、rtmp播放器等
     //测试url http://127.0.0.1/index/api/kick_sessions?local_port=1935
-    api_regist("/index/api/kick_sessions",[](API_ARGS_MAP){
+    api_regist("/index/api/kick_sessions", [](API_ARGS_MAP) {
         CHECK_SECRET();
         uint16_t local_port = allArgs["local_port"].as<uint16_t>();
         string peer_ip = allArgs["peer_ip"];
         size_t count_hit = 0;
 
         list<Session::Ptr> session_list;
-        SessionMap::Instance().for_each_session([&](const string &id,const Session::Ptr &session){
-            if(local_port != 0 && local_port != session->get_local_port()){
+        SessionMap::Instance().for_each_session([&](const string &id, const Session::Ptr &session) {
+            if (local_port != 0 && local_port != session->get_local_port()) {
                 return;
             }
-            if(!peer_ip.empty() && peer_ip != session->get_peer_ip()){
+            if (!peer_ip.empty() && peer_ip != session->get_peer_ip()) {
+                return;
+            }
+            if (session->getIdentifier() == sender.getIdentifier()) {
+                // 忽略本http链接
                 return;
             }
             session_list.emplace_back(session);
             ++count_hit;
         });
 
-        for(auto &session : session_list){
+        for (auto &session : session_list) {
             session->safeShutdown();
         }
         val["count_hit"] = (Json::UInt64)count_hit;
@@ -1735,8 +1741,8 @@ void installWebApi() {
         auto offer = allArgs.getArgs();
         CHECK(!offer.empty(), "http body(webrtc offer sdp) is empty");
 
-        WebRtcPluginManager::Instance().getAnswerSdp(static_cast<Session&>(sender), type,
-                                                     WebRtcArgsImp(allArgs, sender.getIdentifier()),
+        auto args = std::make_shared<WebRtcArgsImp>(allArgs, sender.getIdentifier());
+        WebRtcPluginManager::Instance().getAnswerSdp(static_cast<Session&>(sender), type, *args,
                                                      [invoker, val, offer, headerOut](const WebRtcInterface &exchanger) mutable {
             //设置返回类型
             headerOut["Content-Type"] = HttpFileManager::getContentType(".json");
@@ -1763,7 +1769,8 @@ void installWebApi() {
 
         auto &session = static_cast<Session&>(sender);
         auto location = std::string("http") + (session.overSsl() ? "s" : "") + "://" + allArgs["host"] + delete_webrtc_url;
-        WebRtcPluginManager::Instance().getAnswerSdp(session, type, WebRtcArgsImp(allArgs, sender.getIdentifier()),
+        auto args = std::make_shared<WebRtcArgsImp>(allArgs, sender.getIdentifier());
+        WebRtcPluginManager::Instance().getAnswerSdp(session, type, *args,
                                                      [invoker, offer, headerOut, location](const WebRtcInterface &exchanger) mutable {
                 // 设置跨域
                 headerOut["Access-Control-Allow-Origin"] = "*";
@@ -1816,6 +1823,8 @@ void installWebApi() {
         CHECK_ARGS("vhost", "app", "stream", "file_path");
 
         ProtocolOption option;
+        // mp4支持多track
+        option.max_track = 16;
         // 默认解复用mp4不生成mp4
         option.enable_mp4 = false;
         // 但是如果参数明确指定开启mp4, 那么也允许之

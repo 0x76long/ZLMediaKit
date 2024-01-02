@@ -44,7 +44,6 @@ option(ENABLE_JEMALLOC_STATIC "Enable static linking to the jemalloc library" OF
 option(ENABLE_JEMALLOC_DUMP "Enable jemalloc to dump malloc statistics" OFF)
 option(ENABLE_MEM_DEBUG "Enable Memory Debug" OFF)
 option(ENABLE_MP4 "Enable MP4" ON)
-option(ENABLE_HLS_FMP4 "Enable HLS-FMP4" ON)
 option(ENABLE_MSVC_MT "Enable MSVC Mt/Mtd lib" ON)
 option(ENABLE_MYSQL "Enable MySQL" OFF)
 option(ENABLE_OPENSSL "Enable OpenSSL" ON)
@@ -194,6 +193,12 @@ if(UNIX)
     "-Wall;-Wextra"
     "-Wno-unused-function;-Wno-unused-parameter;-Wno-unused-variable"
     "-Wno-error=extra;-Wno-error=missing-field-initializers;-Wno-error=type-limits")
+
+  if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    set(COMPILE_OPTIONS_DEFAULT ${COMPILE_OPTIONS_DEFAULT} "-g3")
+  else()
+    set(COMPILE_OPTIONS_DEFAULT ${COMPILE_OPTIONS_DEFAULT} "-g0")
+  endif()
 elseif(WIN32)
   if (MSVC)
     set(COMPILE_OPTIONS_DEFAULT
@@ -477,6 +482,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/3rdpart)
 add_subdirectory(3rdpart)
 
 add_subdirectory(src)
+
+add_subdirectory(ext-codec)
 
 if(ENABLE_SRT)
   add_subdirectory(srt)
