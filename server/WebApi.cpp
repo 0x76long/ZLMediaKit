@@ -20,6 +20,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <regex>
 #include "Util/MD5.h"
 #include "Util/util.h"
 #include "Util/File.h"
@@ -203,7 +204,7 @@ static ApiArgsType getAllArgs(const Parser &parser) {
     if (parser["Content-Type"].find("application/x-www-form-urlencoded") == 0) {
         auto contentArgs = parser.parseArgs(parser.content());
         for (auto &pr : contentArgs) {
-            allArgs[pr.first] = HttpSession::urlDecode(pr.second);
+            allArgs[pr.first] = HttpSession::urlDecodeComponent(pr.second);
         }
     } else if (parser["Content-Type"].find("application/json") == 0) {
         try {
@@ -1197,7 +1198,11 @@ void installWebApi() {
             //兼容老版本请求，新版本去除enable_tcp参数并新增tcp_mode参数
             tcp_mode = 1;
         }
-        auto port = openRtpServer(allArgs["port"], stream_id, tcp_mode, "::", allArgs["re_use_port"].as<bool>(),
+        std::string local_ip = "::";
+        if (!allArgs["local_ip"].empty()) {
+            local_ip = allArgs["local_ip"];
+        }
+        auto port = openRtpServer(allArgs["port"], stream_id, tcp_mode, local_ip, allArgs["re_use_port"].as<bool>(),
                                   allArgs["ssrc"].as<uint32_t>(), allArgs["only_audio"].as<bool>());
         if (port == 0) {
             throw InvalidArgsException("该stream_id已存在");
@@ -1215,9 +1220,11 @@ void installWebApi() {
           // 兼容老版本请求，新版本去除enable_tcp参数并新增tcp_mode参数
           tcp_mode = 1;
       }
-
-      auto port = openRtpServer(
-          allArgs["port"], stream_id, tcp_mode, "::", true, 0, allArgs["only_audio"].as<bool>(),true);
+      std::string local_ip = "::";
+      if (!allArgs["local_ip"].empty()) {
+          local_ip = allArgs["local_ip"];
+      }
+      auto port = openRtpServer(allArgs["port"], stream_id, tcp_mode, local_ip, true, 0, allArgs["only_audio"].as<bool>(),true);
       if (port == 0) {
           throw InvalidArgsException("该stream_id已存在");
       }
@@ -1740,16 +1747,26 @@ void installWebApi() {
         auto type = allArgs["type"];
         auto offer = allArgs.getArgs();
         CHECK(!offer.empty(), "http body(webrtc offer sdp) is empty");
+        std::string host = allArgs.getParser()["Host"];
+        std::string localIp = host.substr(0, host.find(':'));
+
+        auto isVaildIP = [](std::string ip)-> bool {
+            int a,b,c,d;
+            return sscanf(ip.c_str(),"%d.%d.%d.%d", &a, &b, &c, &d) == 4;
+        };
+        if (!isVaildIP(localIp) || localIp=="127.0.0.1") {
+            localIp = "";
+        }
 
         auto args = std::make_shared<WebRtcArgsImp>(allArgs, sender.getIdentifier());
-        WebRtcPluginManager::Instance().getAnswerSdp(static_cast<Session&>(sender), type, *args,
-                                                     [invoker, val, offer, headerOut](const WebRtcInterface &exchanger) mutable {
+        WebRtcPluginManager::Instance().getAnswerSdp(static_cast<Session&>(sender), type, *args, [invoker, val, offer, headerOut, localIp](const WebRtcInterface &exchanger) mutable {
             //设置返回类型
             headerOut["Content-Type"] = HttpFileManager::getContentType(".json");
             //设置跨域
             headerOut["Access-Control-Allow-Origin"] = "*";
 
             try {
+                setLocalIp(exchanger,localIp);
                 val["sdp"] = exchangeSdp(exchanger, offer);
                 val["id"] = exchanger.getIdentifier();
                 val["type"] = "answer";

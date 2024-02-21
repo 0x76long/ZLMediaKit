@@ -201,9 +201,26 @@ void WebRtcTransport::OnDtlsTransportConnected(
     onStartWebRTC();
 }
 
+#pragma pack(push, 1)
+struct DtlsHeader {
+    uint8_t content_type;
+    uint16_t dtls_version;
+    uint16_t epoch;
+    uint8_t seq[6];
+    uint16_t length;
+    uint8_t payload[1];
+};
+#pragma pack(pop)
+
 void WebRtcTransport::OnDtlsTransportSendData(
     const RTC::DtlsTransport *dtlsTransport, const uint8_t *data, size_t len) {
-    sendSockData((char *)data, len, nullptr);
+    size_t offset = 0;
+    while(offset < len) {
+        auto *header = reinterpret_cast<const DtlsHeader *>(data + offset);
+        auto length = ntohs(header->length) + offsetof(DtlsHeader, payload);
+        sendSockData((char *)data + offset, length, nullptr);
+        offset += length;
+    }
 }
 
 void WebRtcTransport::OnDtlsTransportConnecting(const RTC::DtlsTransport *dtlsTransport) {
@@ -618,7 +635,7 @@ void WebRtcTransportImp::onCheckAnswer(RtcSession &sdp) {
     });
     for (auto &m : sdp.media) {
         m.addr.reset();
-        m.addr.address = extern_ips.empty() ? SockUtil::get_local_ip() : extern_ips[0];
+        m.addr.address = extern_ips.empty() ? _localIp.empty() ? SockUtil::get_local_ip() : _localIp : extern_ips[0];
         m.rtcp_addr.reset();
         m.rtcp_addr.address = m.addr.address;
 
@@ -713,7 +730,7 @@ void WebRtcTransportImp::onRtcConfigure(RtcConfigure &configure) const {
         return ret;
     });
     if (extern_ips.empty()) {
-        std::string local_ip = SockUtil::get_local_ip();
+        std::string local_ip = _localIp.empty() ? SockUtil::get_local_ip() : _localIp;
         if (local_udp_port) { configure.addCandidate(*makeIceCandidate(local_ip, local_udp_port, 120, "udp")); }
         if (local_tcp_port) { configure.addCandidate(*makeIceCandidate(local_ip, local_tcp_port, _preferred_tcp ? 125 : 115, "tcp")); }
     } else {
@@ -729,6 +746,10 @@ void WebRtcTransportImp::onRtcConfigure(RtcConfigure &configure) const {
 
 void WebRtcTransportImp::setIceCandidate(vector<SdpAttrCandidate> cands) {
     _cands = std::move(cands);
+}
+
+void WebRtcTransportImp::setLocalIp(const std::string &localIp) {
+    _localIp = localIp;
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -1220,6 +1241,10 @@ void WebRtcPluginManager::registerPlugin(const string &type, Plugin cb) {
 
 std::string exchangeSdp(const WebRtcInterface &exchanger, const std::string& offer) {
     return const_cast<WebRtcInterface &>(exchanger).getAnswerSdp(offer);
+}
+
+void setLocalIp(const WebRtcInterface& exchanger, const std::string& localIp) {
+    return const_cast<WebRtcInterface &>(exchanger).setLocalIp(localIp);
 }
 
 void WebRtcPluginManager::setListener(Listener cb) {
