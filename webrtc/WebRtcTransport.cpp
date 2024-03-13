@@ -31,7 +31,6 @@
 #define RTP_CNAME "zlmediakit-rtp"
 #define RTP_LABEL "zlmediakit-label"
 #define RTP_MSLABEL "zlmediakit-mslabel"
-#define RTP_MSID RTP_MSLABEL " " RTP_LABEL
 
 using namespace std;
 
@@ -55,6 +54,9 @@ const string kStartBitrate = RTC_FIELD "start_bitrate";
 const string kMaxBitrate = RTC_FIELD "max_bitrate";
 const string kMinBitrate = RTC_FIELD "min_bitrate";
 
+// 数据通道设置
+const string kDataChannelEcho = RTC_FIELD "datachannel_echo";
+
 static onceToken token([]() {
     mINI::Instance()[kTimeOutSec] = 15;
     mINI::Instance()[kExternIP] = "";
@@ -65,6 +67,8 @@ static onceToken token([]() {
     mINI::Instance()[kStartBitrate] = 0;
     mINI::Instance()[kMaxBitrate] = 0;
     mINI::Instance()[kMinBitrate] = 0;
+
+    mINI::Instance()[kDataChannelEcho] = true;
 });
 
 } // namespace RTC
@@ -250,22 +254,47 @@ void WebRtcTransport::OnDtlsTransportApplicationDataReceived(
 #ifdef ENABLE_SCTP
 void WebRtcTransport::OnSctpAssociationConnecting(RTC::SctpAssociation *sctpAssociation) {
     TraceL << getIdentifier();
+    try {
+        NOTICE_EMIT(BroadcastRtcSctpConnectArgs, Broadcast::kBroadcastRtcSctpConnecting, *this);
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
 }
 
 void WebRtcTransport::OnSctpAssociationConnected(RTC::SctpAssociation *sctpAssociation) {
     InfoL << getIdentifier();
+    try {
+        NOTICE_EMIT(BroadcastRtcSctpConnectArgs, Broadcast::kBroadcastRtcSctpConnected, *this);
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
 }
 
 void WebRtcTransport::OnSctpAssociationFailed(RTC::SctpAssociation *sctpAssociation) {
     WarnL << getIdentifier();
+    try {
+        NOTICE_EMIT(BroadcastRtcSctpConnectArgs, Broadcast::kBroadcastRtcSctpFailed, *this);
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
 }
 
 void WebRtcTransport::OnSctpAssociationClosed(RTC::SctpAssociation *sctpAssociation) {
     InfoL << getIdentifier();
+    try {
+        NOTICE_EMIT(BroadcastRtcSctpConnectArgs, Broadcast::kBroadcastRtcSctpClosed, *this);
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
 }
 
 void WebRtcTransport::OnSctpAssociationSendData(
     RTC::SctpAssociation *sctpAssociation, const uint8_t *data, size_t len) {
+    try {
+        NOTICE_EMIT(BroadcastRtcSctpSendArgs, Broadcast::kBroadcastRtcSctpSend, *this, data, len);
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
     _dtls_transport->SendApplicationData(data, len);
 }
 
@@ -274,8 +303,18 @@ void WebRtcTransport::OnSctpAssociationMessageReceived(
     InfoL << getIdentifier() << " " << streamId << " " << ppid << " " << len << " " << string((char *)msg, len);
     RTC::SctpStreamParameters params;
     params.streamId = streamId;
-    // 回显数据
-    _sctp->SendSctpMessage(params, ppid, msg, len);
+
+    GET_CONFIG(bool, datachannel_echo, Rtc::kDataChannelEcho);
+    if (datachannel_echo) {
+        // 回显数据
+        _sctp->SendSctpMessage(params, ppid, msg, len);
+    }
+
+    try {
+        NOTICE_EMIT(BroadcastRtcSctpReceivedArgs, Broadcast::kBroadcastRtcSctpReceived, *this, streamId, ppid, msg, len);
+    } catch (std::exception &ex) {
+        WarnL << "Exception occurred: " << ex.what();
+    }
 }
 #endif
 
@@ -667,9 +706,9 @@ void WebRtcTransportImp::onCheckAnswer(RtcSession &sdp) {
         // 发送的ssrc我们随便定义，因为在发送rtp时会修改为此值
         ssrc.ssrc = m.type + RTP_SSRC_OFFSET;
         ssrc.cname = RTP_CNAME;
-        ssrc.label = RTP_LABEL;
+        ssrc.label = std::string(RTP_LABEL) + '-' + m.mid;
         ssrc.mslabel = RTP_MSLABEL;
-        ssrc.msid = RTP_MSID;
+        ssrc.msid = ssrc.mslabel + ' ' + ssrc.label;
 
         if (m.getRelatedRtxPlan(m.plan[0].pt)) {
             // rtx ssrc
