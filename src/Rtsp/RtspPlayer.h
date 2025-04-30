@@ -117,6 +117,7 @@ protected:
 private:
     void onPlayResult_l(const toolkit::SockException &ex , bool handshake_done);
 
+    int getTrackIndexByPT(int pt) const;
     int getTrackIndexByInterleaved(int interleaved) const;
     int getTrackIndexByTrackType(TrackType track_type) const;
 
@@ -124,7 +125,8 @@ private:
     void handleResDESCRIBE(const Parser &parser);
     bool handleAuthenticationFailure(const std::string &wwwAuthenticateParamsStr);
     void handleResPAUSE(const Parser &parser, int type);
-    bool handleResponse(const std::string &cmd, const Parser &parser);
+    using send_method_handler = void (RtspPlayer::*)(void);
+    bool handleResponse(const std::string &cmd, const Parser &parser, send_method_handler handler);
 
     void sendOptions();
     void sendSetup(unsigned int track_idx);
