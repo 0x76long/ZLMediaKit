@@ -256,7 +256,7 @@ static onceToken token([]() {
     mINI::Instance()[kHandshakeSecond] = 15;
     mINI::Instance()[kKeepAliveSecond] = 15;
     mINI::Instance()[kDirectProxy] = 1;
-    mINI::Instance()[kEnhanced] = 0;
+    mINI::Instance()[kEnhanced] = 1;
 });
 } // namespace Rtmp
 
@@ -400,6 +400,7 @@ const string kProxyUrl = "proxy_url";
 const string kRtspSpeed = "rtsp_speed";
 const string kLatency = "latency";
 const string kPassPhrase = "passPhrase";
+const string kCustomHeader = "custom_header";
 } // namespace Client
 
 } // namespace mediakit
