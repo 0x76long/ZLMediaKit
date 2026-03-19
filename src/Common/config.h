@@ -60,7 +60,7 @@ extern const std::string kBroadcastHttpRequest;
 // 在http文件服务器中,收到http访问文件或目录的广播,通过该事件控制访问http目录的权限  [AUTO-TRANSLATED:2de426b4]
 // In the http file server, broadcast for receiving http access to files or directories. Control access permissions to the http directory through this event.
 extern const std::string kBroadcastHttpAccess;
-#define BroadcastHttpAccessArgs const Parser &parser, const std::string &path, const bool &is_dir, const HttpSession::HttpAccessPathInvoker &invoker, toolkit::SockInfo &sender
+#define BroadcastHttpAccessArgs const Parser &parser, const std::string &path, const std::string &file_path, const bool &is_dir, const HttpSession::HttpAccessPathInvoker &invoker, toolkit::SockInfo &sender
 
 // 在http文件服务器中,收到http访问文件或目录前的广播,通过该事件可以控制http url到文件路径的映射  [AUTO-TRANSLATED:0294d0c5]
 // In the http file server, broadcast before receiving http access to files or directories. Control the mapping from http url to file path through this event.
@@ -126,7 +126,7 @@ extern const std::string kBroadcastStreamNoneReader;
 // rtp推流被动停止时触发  [AUTO-TRANSLATED:43881965]
 // Triggered when rtp push stream is passively stopped.
 extern const std::string kBroadcastSendRtpStopped;
-#define BroadcastSendRtpStoppedArgs MultiMediaSourceMuxer &sender, const std::string &ssrc, const SockException &ex
+#define BroadcastSendRtpStoppedArgs MultiMediaSourceMuxer &sender, const std::string &ssrc, const toolkit::SockException &ex
 
 // 更新配置文件事件广播,执行loadIniConfig函数加载配置文件成功后会触发该广播  [AUTO-TRANSLATED:ad4e167d]
 // Update configuration file event broadcast. This broadcast will be triggered after the loadIniConfig function loads the configuration file successfully.
@@ -160,6 +160,12 @@ extern const std::string kBroadcastRtcSctpReceived;
 // broadcast viewer count changes
 extern const std::string kBroadcastPlayerCountChanged;
 #define BroadcastPlayerCountChangedArgs const MediaTuple& args, const int& count
+
+extern const std::string kBroadcastPlayerProxyFailed;
+#define BroadcastPlayerProxyFailedArgs const PlayerProxy& sender, const toolkit::SockException &ex
+
+extern const std::string kBroadcastCreateMuxer;
+#define BroadcastCreateMuxerArgs MediaSinkInterface::Ptr &delegate, const MultiMediaSourceMuxer &sender
 
 #define ReloadConfigTag ((void *)(0xFF))
 #define RELOAD_KEY(arg, key)                                                                                           \
@@ -632,6 +638,8 @@ extern const std::string kLatency;
 extern const std::string kPassPhrase;
 // 自定义rtsp/http头
 extern const std::string kCustomHeader;
+// 指定采用什么播放协议
+extern const std::string kSchema;
 } // namespace Client
 } // namespace mediakit
 
