@@ -157,11 +157,8 @@ void handle_http_request(const py::object &check_route, const py::object &submit
     try {
         auto args = getAllArgs(parser);
         auto allArgs = ArgsMap(parser, args);
-        GET_CONFIG(bool, legacy_auth , API::kLegacyAuth);
-        if (!legacy_auth) {
-            // 非传统secret鉴权模式，Python接口强制要求登录鉴权
-            CHECK_SECRET();
-        }
+        // Python接口要求登录鉴权
+        CHECK_SECRET();
     } catch (std::exception &ex) {
         auto ex1 = dynamic_cast<ApiRetException *>(&ex);
         if (ex1) {
@@ -377,6 +374,20 @@ PYBIND11_EMBEDDED_MODULE(mk_loader, m) {
         py::arg("timeout_sec") = 0.0f, py::arg("opt") = py::dict()
     );
 
+    // update_stream_proxy(vhost, app, stream, url, opt={})
+    // 更新已有拉流代理的 url 和参数，流不存在时抛出异常
+    m.def("update_stream_proxy",
+        [](const std::string &vhost, const std::string &app, const std::string &stream,
+           const std::string &url, const py::dict &opt) {
+            mINI args = to_native(opt);
+            MediaTuple tuple { vhost.empty() ? DEFAULT_VHOST : vhost, app, stream, "" };
+            py::gil_scoped_release release;
+            updateStreamProxy(tuple, url, args);
+        },
+        py::arg("vhost"), py::arg("app"), py::arg("stream"), py::arg("url"),
+        py::arg("opt") = py::dict()
+    );
+
     m.def("set_fastapi", [](const py::object &check_route, const py::object &submit_coro) {
         static void *fastapi_tag = nullptr;
         NoticeCenter::Instance().delListener(&fastapi_tag, Broadcast::kBroadcastHttpRequest);
@@ -549,7 +560,7 @@ bool set_python_path() {
         PrintI("PYTHONPATH is already set to: %s", env_var);
         return false;
     }
-    auto default_path = exeDir() + "/python";
+    auto default_path = exeDir() + "/python:" + exeDir() + "/pymkui/backend";
     // 1 表示覆盖已存在的值
     if (!set_env("PYTHONPATH", default_path.data())) {
         PrintW("Failed to set PYTHONPATH");

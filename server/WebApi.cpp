@@ -86,7 +86,6 @@ const string kSecret = API_FIELD"secret";
 const string kSnapRoot = API_FIELD"snapRoot";
 const string kDefaultSnap = API_FIELD"defaultSnap";
 const string kDownloadRoot = API_FIELD"downloadRoot";
-const string kLegacyAuth = API_FIELD"legacyAuth";
 
 static onceToken token([]() {
     mINI::Instance()[kApiDebug] = "1";
@@ -94,7 +93,6 @@ static onceToken token([]() {
     mINI::Instance()[kSnapRoot] = "./www/snap/";
     mINI::Instance()[kDefaultSnap] = "./www/logo.png";
     mINI::Instance()[kDownloadRoot] = "./www";
-    mINI::Instance()[kLegacyAuth] = 1;
 });
 }//namespace API
 
@@ -594,6 +592,17 @@ void getStatisticJson(const function<void(Value &val)> &cb) {
 #endif
 }
 
+void updateStreamProxy(const mediakit::MediaTuple &tuple, const std::string &url, const toolkit::mINI &args) {
+    auto key = tuple.shortUrl();
+    auto player = s_player_proxy.find(key);
+    if (!player) {
+        throw std::runtime_error("proxy player not found: " + key);
+    }
+    player->getPoller()->async([url, args, player]() {
+        player->update(url, args);
+    });
+}
+
 void addStreamProxy(const MediaTuple &tuple, const string &url, int retry_count, bool force,
                     const ProtocolOption &option, float timeout_sec, const mINI &args,
                     const function<void(const SockException &ex, const string &key)> &cb) {
@@ -736,19 +745,14 @@ static constexpr size_t kLoginedCookieLifeSeconds = 24 * 3600;
 
 template <typename T>
 void check_secret(toolkit::SockInfo &sender, mediakit::HttpSession::KeyValue &headerOut, const HttpAllArgs<T> &allArgs, Json::Value &val) {
-    GET_CONFIG(bool, legacy_auth , API::kLegacyAuth);
     GET_CONFIG(std::string, api_secret, API::kSecret);
 
     auto ip = sender.get_peer_ip();
     if (!HttpFileManager::isIPAllowed(ip)) {
         throw AuthException("Your ip is not allowed to access the service.");
     }
-    if (legacy_auth) {
-        CHECK_ARGS("secret");
-        if (api_secret != allArgs["secret"]) {
-            throw AuthException("Incorrect secret");
-        }
-    } else {
+
+    try {
         auto logined_cookie = HttpCookieManager::Instance().getCookie(kLoginedCookieName, allArgs.getParser().getHeader());
         if (!logined_cookie) {
             auto unlogin_cookie = HttpCookieManager::Instance().getCookie(kUnLoginCookieName, allArgs.getParser().getHeader());
@@ -759,6 +763,20 @@ void check_secret(toolkit::SockInfo &sender, mediakit::HttpSession::KeyValue &he
             val["cookie"] = unlogin_cookie->getCookie();
             throw AuthException("Please login first", headerOut, val);
         }
+        // 优先cookie登陆鉴权
+    } catch (...) {
+        try {
+            // cookie登陆鉴权失败了再比对secret
+            CHECK_ARGS("secret");
+            if (api_secret != allArgs["secret"]) {
+                throw AuthException("Incorrect secret");
+            }
+            return;
+        } catch (...) {
+            // 未提供secret或secret不匹配，这个异常隐藏
+        }
+        // secret鉴权模式失败，抛出要求cookie登录的异常
+        throw;
     }
 }
 
@@ -2162,10 +2180,14 @@ void installWebApi() {
         WebRtcPluginManager::Instance().negotiateSdp(session, type, *args, [invoker, offer, headerOut, location](const WebRtcInterface &exchanger) mutable {
             auto &handler = const_cast<WebRtcInterface &>(exchanger);
             try {
+                // Encode query params since transport id/token may contain '+' or '/'.
+                HttpArgs delete_args;
+                delete_args["id"] = exchanger.getIdentifier();
+                delete_args["token"] = exchanger.deleteRandStr();
                 // 设置返回类型  [AUTO-TRANSLATED:ffc2a31a]
                 // Set return type
                 headerOut["Content-Type"] = "application/sdp";
-                headerOut["Location"] = location + "?id=" + exchanger.getIdentifier() + "&token=" + exchanger.deleteRandStr();
+                headerOut["Location"] = location + "?" + delete_args.make();
                 invoker(201, headerOut, handler.getAnswerSdp(offer));
             } catch (std::exception &ex) {
                 headerOut["Content-Type"] = "text/plain";
@@ -2546,6 +2568,89 @@ void installWebApi() {
         invoker(200, headerOut, val.toStyledString());
     });
 #endif
+
+    // 设置流播放速度
+    // Set stream playback speed
+    api_regist("/index/api/setStreamSpeed", [](API_ARGS_JSON_ASYNC) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream", "speed");
+
+        std::string vhost = allArgs["vhost"];
+        std::string app = allArgs["app"];
+        std::string stream = allArgs["stream"];
+        float speed = allArgs["speed"].as<float>();
+
+        auto tuple = MediaTuple { vhost, app, stream, "" };
+        std::string key = tuple.shortUrl();
+        
+        auto player_proxy = s_player_proxy.find(key);
+        if (!player_proxy) {
+            throw ApiRetException("can not find the stream proxy", API::NotFound);
+        }
+        
+        player_proxy->getPoller()->async([=]() mutable {
+            player_proxy->MediaPlayer::speed(speed);
+            val["result"] = 0;
+            val["msg"] = "success";
+            val["code"] = API::Success;
+            invoker(200, headerOut, val.toStyledString());
+        });
+    });
+
+    // 暂停/恢复流播放
+    // Pause/Resume stream playback
+    api_regist("/index/api/pauseStream", [](API_ARGS_JSON_ASYNC) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream");
+        
+        std::string vhost = allArgs["vhost"];
+        std::string app = allArgs["app"];
+        std::string stream = allArgs["stream"];
+        
+        auto tuple = MediaTuple { vhost, app, stream, "" };
+        std::string key = tuple.shortUrl();
+        
+        auto player_proxy = s_player_proxy.find(key);
+        if (!player_proxy) {
+            throw ApiRetException("can not find the stream proxy", API::NotFound);
+        }
+        
+        player_proxy->getPoller()->async([=]() mutable {
+            player_proxy->MediaPlayer::pause(true);
+            val["result"] = 0;
+            val["msg"] = "success";
+            val["code"] = API::Success;
+            invoker(200, headerOut, val.toStyledString());
+        });
+    });
+
+    // 跳转到指定位置
+    // Seek to specified position
+    api_regist("/index/api/seekStream", [](API_ARGS_JSON_ASYNC) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream");
+        
+        std::string vhost = allArgs["vhost"];
+        std::string app = allArgs["app"];
+        std::string stream = allArgs["stream"]; 
+        uint32_t pos = allArgs["position"].as<uint32_t>();
+        
+        auto tuple = MediaTuple { vhost, app, stream, "" };
+        std::string key = tuple.shortUrl();
+        
+        auto player_proxy = s_player_proxy.find(key);
+        if (!player_proxy) {
+            throw ApiRetException("can not find the stream proxy", API::NotFound);
+        }
+        
+        player_proxy->getPoller()->async([=]() mutable {
+            player_proxy->MediaPlayer::seekTo(pos);
+            val["result"] = 0;
+            val["msg"] = "success";
+            val["code"] = API::Success;
+            invoker(200, headerOut, val.toStyledString());
+        });
+    });
 }
 
 void unInstallWebApi(){

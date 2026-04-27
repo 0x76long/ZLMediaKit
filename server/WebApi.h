@@ -55,7 +55,6 @@ typedef enum {
 } ApiErr;
 
 extern const std::string kSecret;
-extern const std::string kLegacyAuth;
 extern const std::string kApiDebug;
 } // namespace API
 
@@ -252,6 +251,8 @@ void getStatisticJson(const std::function<void(Json::Value &val)> &cb);
 void addStreamProxy(const mediakit::MediaTuple &tuple, const std::string &url, int retry_count, bool force,
                     const mediakit::ProtocolOption &option, float timeout_sec, const toolkit::mINI &args,
                     const std::function<void(const toolkit::SockException &ex, const std::string &key)> &cb);
+
+void updateStreamProxy(const mediakit::MediaTuple &tuple, const std::string &url, const toolkit::mINI &args);
 
 template <typename Type>
 class ServiceController {
