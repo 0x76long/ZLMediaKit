@@ -426,8 +426,6 @@ PYBIND11_EMBEDDED_MODULE(mk_loader, m) {
         .def("getSchema", &MediaSource::getSchema)
         .def("getUrl", &MediaSource::getUrl)
         .def("getMediaTuple", &MediaSource::getMediaTuple)
-        .def("getTimeStamp", &MediaSource::getTimeStamp)
-        .def("setTimeStamp", &MediaSource::setTimeStamp)
         .def("getBytesSpeed", &MediaSource::getBytesSpeed)
         .def("getTotalBytes", &MediaSource::getTotalBytes)
         .def("getCreateStamp", &MediaSource::getCreateStamp)
@@ -623,10 +621,11 @@ PythonInvoker::PythonInvoker() {
             }
         }
     });
+    _notice_center = NoticeCenter::Instance().shared_from_this();
 }
 
 PythonInvoker::~PythonInvoker() {
-    NoticeCenter::Instance().delListener(this, Broadcast::kBroadcastReloadConfig);
+    _notice_center->delListener(this, Broadcast::kBroadcastReloadConfig);
     {
         py::gil_scoped_acquire gil; // 加锁
         if (_on_exit) {

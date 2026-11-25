@@ -88,16 +88,6 @@ public:
     bool isEnabled();
 
     /**
-     * 设置MediaSource时间戳
-     * @param stamp 时间戳
-     * Set MediaSource timestamp
-     * @param stamp Timestamp
-     
-     * [AUTO-TRANSLATED:a75cc2fa]
-     */
-    void setTimeStamp(uint32_t stamp);
-
-    /**
      * 重置track
      * Reset track
      
@@ -194,6 +184,9 @@ public:
      */
     std::shared_ptr<MultiMediaSourceMuxer> getMuxer(MediaSource &sender) const override;
 
+    // 获取frame ring reader
+    RingType::RingReader::Ptr getFrameReader();
+
     const ProtocolOption &getOption() const;
     const MediaTuple &getMediaTuple() const;
     std::string shortUrl() const;
@@ -238,7 +231,7 @@ protected:
     bool onTrackFrame_l(const Frame::Ptr &frame);
 
 private:
-    void createGopCacheIfNeed(size_t gop_count);
+    void createGopCacheIfNeed();
     std::shared_ptr<MediaSinkInterface> makeRecorder(Recorder::type type);
 
 private:

@@ -589,7 +589,15 @@ string SdpAttrRtcpFb::toString() const {
 
 void SdpAttrFmtp::parse(const string &str) {
     auto pos = str.find(' ');
-    CHECK_SDP(pos != string::npos);
+    // 兼容 a=fmtp:<pt> 不带参数的情况(部分摄像机/NVR 的 SDP 如此)，它等价于没有 fmtp 参数，
+    // 不能按解析失败处理，否则整段 SDP 解析失败，WebRTC 播放会直接返回 400
+    // Compatible with a=fmtp:<pt> without parameters (as some cameras/NVRs write it): it means no
+    // fmtp parameter, and must not fail the whole SDP parsing which breaks WebRTC playback with 400
+    if (pos == string::npos) {
+        CHECK_SDP(!str.empty());
+        pt = atoi(str.data());
+        return;
+    }
     pt = atoi(str.substr(0, pos).data());
     auto vec = split(str.substr(pos + 1), ";");
     for (auto &item : vec) {
@@ -610,7 +618,10 @@ string SdpAttrFmtp::toString() const {
         int i = 0;
         for (auto &pr : fmtp) {
             value += (i++ ? ';' : ' ');
-            value += pr.first + "=" + pr.second;
+            value += pr.first;
+            if (!pr.second.empty()) {
+                value += "=" + pr.second;
+            }
         }
     }
     return SdpItem::toString();
@@ -1001,7 +1012,7 @@ void RtcSdpBase::toRtsp() {
             case 'a': {
                 auto attr = dynamic_pointer_cast<SdpAttr>(*it);
                 CHECK(attr);
-                if (!strcasecmp(attr->detail->getKey(), "rtpmap") || !strcasecmp(attr->detail->getKey(), "fmtp")) {
+                if (!strcasecmp(attr->detail->getKey(), "rtpmap") || !strcasecmp(attr->detail->getKey(), "fmtp") || !strcasecmp(attr->detail->getKey(), "extmap")) {
                     ++it;
                     break;
                 }
@@ -1032,6 +1043,14 @@ string RtcSession::toRtspSdp() const {
     }
 
     CHECK(!copy.media.empty());
+    for (auto &m : copy.media) {
+        for (auto &ext : m.extmap) {
+            if (ext.direction == RtpDirection::recvonly || ext.direction == RtpDirection::sendonly) {
+                // 去除extmap中recvonly或sendonly属性
+                ext.direction = RtpDirection::sendrecv;
+            }
+        }
+    }
     auto sdp = copy.toRtcSessionSdp();
     sdp->toRtsp();
     int i = 0;
@@ -1383,6 +1402,15 @@ const RtcMedia *RtcSession::getMedia(TrackType type) const {
     return nullptr;
 }
 
+const RtcMedia *RtcSession::getMediaByMid(const string &mid) const {
+    for (auto &m : media) {
+        if (m.mid == mid) {
+            return &m;
+        }
+    }
+    return nullptr;
+}
+
 bool RtcSession::supportRtcpFb(const string &name, TrackType type) const {
     auto media = getMedia(type);
     if (!media) {
@@ -1445,7 +1473,7 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type) {
     rtcp_rsize = false;
     group_bundle = true;
     support_rtx = true;
-    support_red = false;
+    support_red = (type == TrackAudio);
     support_ulpfec = false;
     ice_lite = true;
     ice_trickle = true;
@@ -1465,7 +1493,7 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type) {
                        { RtpExtType::transport_cc, RtpDirection::sendrecv },
                        // rtx重传rtp时，忽略sdes_mid类型的rtp ext,实测发现Firefox在接收rtx时，如果存在sdes_mid的ext,将导致无法播放  [AUTO-TRANSLATED:221df025]
                        // When rtx retransmits rtp, ignore the rtp ext of sdes_mid type. It is found that Firefox cannot play when receiving rtx if there is an ext of sdes_mid
-                       //{RtpExtType::sdes_mid,RtpDirection::sendrecv},
+                       { RtpExtType::sdes_mid,RtpDirection::sendrecv},
                        { RtpExtType::sdes_rtp_stream_id, RtpDirection::sendrecv },
                        { RtpExtType::sdes_repaired_rtp_stream_id, RtpDirection::sendrecv } };
             break;
@@ -1482,7 +1510,7 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type) {
                        { RtpExtType::transport_cc, RtpDirection::sendrecv },
                        // rtx重传rtp时，忽略sdes_mid类型的rtp ext,实测发现Firefox在接收rtx时，如果存在sdes_mid的ext,将导致无法播放  [AUTO-TRANSLATED:221df025]
                        // When rtx retransmits rtp, ignore the rtp ext of sdes_mid type. It is found that Firefox cannot play when receiving rtx if there is an ext of sdes_mid
-                       //{RtpExtType::sdes_mid,RtpDirection::sendrecv},
+                       { RtpExtType::sdes_mid,RtpDirection::sendrecv},
                        { RtpExtType::sdes_rtp_stream_id, RtpDirection::sendrecv },
                        { RtpExtType::sdes_repaired_rtp_stream_id, RtpDirection::sendrecv },
                        { RtpExtType::video_timing, RtpDirection::sendrecv },
@@ -1672,11 +1700,16 @@ static uint16_t getAnswerMediaPort(const RtcMedia &offer_media) {
 void RtcConfigure::createMediaOffer(const std::shared_ptr<RtcSession> &ret) const {
     int index = 0;
     if (video.direction != RtpDirection::sendonly || _rtsp_video_plan)  {
-        createMediaOfferEach(ret, TrackVideo, index++);
+        // 支持单PeerConnection多条同类型mline(如视频会议预留接收mline)
+        for (int i = 0; i < (std::max)(1, video_mline_count); ++i) {
+            createMediaOfferEach(ret, TrackVideo, index++);
+        }
     }
 
     if (audio.direction != RtpDirection::sendonly || _rtsp_audio_plan)  {
-        createMediaOfferEach(ret, TrackAudio, index++);
+        for (int i = 0; i < (std::max)(1, audio_mline_count); ++i) {
+            createMediaOfferEach(ret, TrackAudio, index++);
+        }
     }
     // createMediaOfferEach(ret, TrackApplication, index++);
 }
@@ -1688,7 +1721,7 @@ void RtcConfigure::createMediaOfferEach(const std::shared_ptr<RtcSession> &ret, 
         audio_list_ref.emplace(CodecG711U, make_shared<AudioRtpMap>("PCMU", 0, 8000));
         audio_list_ref.emplace(CodecG711A, make_shared<AudioRtpMap>("PCMA", 8, 8000));
         audio_list_ref.emplace(CodecOpus, make_shared<AudioRtpMap>("opus", 111, 48000));
-        audio_list_ref.emplace(CodecAAC, make_shared<AudioRtpMap>("mpeg4-generic", 96, 48000));
+        audio_list_ref.emplace(CodecAAC, make_shared<AudioRtpMap>("mpeg4-generic", 112, 48000));
 
         video_list_ref.emplace(CodecH264, make_shared<H264RtpMap>(102, 90000, PROFILE_H264_BASELINE));
         video_list_ref.emplace(CodecH264, make_shared<H264RtpMap>(104, 90000, PROFILE_H264_MAIN));
@@ -2085,6 +2118,18 @@ void RtcConfigure::onSelectPlan(RtcCodecPlan &plan, CodecId codec) const {
         GET_CONFIG(bool, h264_stap_a, Rtp::kH264StapA);
         plan.fmtp[kMode] = mode.empty() ? std::to_string(h264_stap_a) : mode;
     }
+    if (_rtsp_audio_plan && codec == CodecAAC && getCodecId(_rtsp_audio_plan->codec) == CodecAAC) {
+        // aac时，设置fmtp
+        plan.fmtp = _rtsp_audio_plan->fmtp;
+    }
+#if 0 // answer sdp是否开启fec由answer决定
+    if (codec == CodecOpus) {
+        // 开启Opus内带FEC（in-band FEC），提升音频抗丢包能力
+        plan.fmtp["useinbandfec"] = "1";
+        // 开启DTX（不连续传输），静音时降低带宽消耗
+        plan.fmtp["usedtx"] = "1";
+    }
+#endif
 }
 
 } // namespace mediakit

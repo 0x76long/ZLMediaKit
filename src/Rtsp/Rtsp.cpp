@@ -135,6 +135,12 @@ string SdpTrack::getControlUrl(const string &base_url) const {
         // Starts with rtsp://
         return _control;
     }
+    // base_url 已以 '/' 结尾时不再追加分隔符，避免拼接出双斜杠，同时保留多个末尾斜杠的路径语义
+    // When base_url ends with '/', avoid appending an extra separator to prevent double slash,
+    // while preserving the path semantics of multiple trailing slashes
+    if (!base_url.empty() && base_url.back() == '/') {
+        return base_url + _control;
+    }
     return base_url + "/" + _control;
 }
 
@@ -697,6 +703,14 @@ size_t RtpPacket::getPayloadSize() const {
     // 需除去rtcp over tcp 4个字节长度  [AUTO-TRANSLATED:936f6f5b]
     // Need to remove the rtcp over tcp 4 byte length
     return getHeader()->getPayloadSize(size() - kRtpTcpHeaderSize);
+}
+
+void RtpPacket::clone(const RtpPacket &that) {
+    type = that.type;
+    sample_rate = that.sample_rate;
+    ntp_stamp = that.ntp_stamp;
+    track_index = that.track_index;
+    assign(that.data(), that.size());
 }
 
 RtpPacket::Ptr RtpPacket::create() {

@@ -96,7 +96,7 @@ public:
 
     // 获取MultiMediaSourceMuxer对象  [AUTO-TRANSLATED:2de96d44]
     // Get MultiMediaSourceMuxer object
-    virtual std::shared_ptr<MultiMediaSourceMuxer> getMuxer(MediaSource &sender) const { return nullptr; }
+    virtual std::shared_ptr<MultiMediaSourceMuxer> getMuxer(MediaSource &sender) const { throw NotImplemented(toolkit::demangle(typeid(*this).name()) + "::getMuxer not implemented"); }
     // 获取RtpProcess对象  [AUTO-TRANSLATED:c6b7da43]
     // Get RtpProcess object
     virtual std::shared_ptr<RtpProcess> getRtpProcess(MediaSource &sender) const { return nullptr; }
@@ -425,13 +425,6 @@ public:
     // 获取所有Track  [AUTO-TRANSLATED:59f1c570]
     // Get all Tracks
     std::vector<Track::Ptr> getTracks(bool ready = true) const override;
-
-    // 获取流当前时间戳  [AUTO-TRANSLATED:f65f560a]
-    // Get the current timestamp of the stream
-    virtual uint32_t getTimeStamp(TrackType type) { return 0; };
-    // 设置时间戳  [AUTO-TRANSLATED:2bfce32f]
-    // Set timestamp
-    virtual void setTimeStamp(uint32_t stamp) {};
 
     // 获取数据速率，单位bytes/s  [AUTO-TRANSLATED:c70465c1]
     // Get data rate, unit bytes/s
